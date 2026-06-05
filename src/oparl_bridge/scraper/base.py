@@ -175,22 +175,10 @@ async def _parse_organizations(page: Page) -> list[ScrapedOrganization]:
             continue
 
         name = (await link.inner_text()).strip()
-        cells = await row.query_selector_all("td")
-        short_name = None
-        org_type = None
-        if len(cells) >= 2:
-            short_name = (await cells[1].inner_text()).strip() or None
-        if len(cells) >= 3:
-            org_type = (await cells[2].inner_text()).strip() or None
 
-        results.append(
-            ScrapedOrganization(
-                id=grlfdnr,
-                name=name,
-                short_name=short_name,
-                organization_type=org_type,
-            )
-        )
+        # gr010 columns: Name | Mitglieder | Letzte Sitzung | Nächste Sitzung
+        # No short name or organization type available on this page.
+        results.append(ScrapedOrganization(id=grlfdnr, name=name))
     return results
 
 
