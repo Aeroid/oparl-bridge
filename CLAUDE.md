@@ -25,9 +25,8 @@ ALLRIS (Wicket/Ajax)  →  Playwright scraper  →  SQLite (metadata)  →  Fast
 PDFs are NOT fetched or stored — only `accessUrl` pointing back to ALLRIS.
 
 ## Development target
-```
-https://www.neu-wulmstorf.de/allris/
-```
+The local `.env` (gitignored) points to `https://www.neu-wulmstorf.de/allris/`.
+Do not hardcode this URL anywhere in the source — it belongs in `.env` only.
 
 ## ALLRIS URL patterns (consistent across all instances)
 | Path | Description |
@@ -56,29 +55,32 @@ WebFetch/curl will get 403. Always use Playwright for scraping.
 ## Configuration (env vars with `OPARL_` prefix)
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPARL_ALLRIS_BASE_URL` | `https://www.neu-wulmstorf.de/allris` | ALLRIS instance URL |
+| `OPARL_ALLRIS_BASE_URL` | *(required)* | ALLRIS instance URL — set in `.env` |
 | `OPARL_DATABASE_URL` | `sqlite:///./oparl_bridge.db` | SQLAlchemy DB URL |
-| `OPARL_API_BASE_URL` | `http://localhost:8000` | Public API base URL |
-| `OPARL_BODY_NAME` | `Gemeinde Neu Wulmstorf` | Municipality name |
-| `OPARL_BODY_WEBSITE` | `https://www.neu-wulmstorf.de` | Municipality website |
+| `OPARL_API_BASE_URL` | `http://localhost:8000` | Fallback only — API derives URLs from the incoming request automatically |
+| `OPARL_BODY_NAME` | *(required)* | Municipality name — set in `.env` |
+| `OPARL_BODY_WEBSITE` | *(required)* | Municipality website — set in `.env` |
 | `OPARL_SCRAPER_HEADLESS` | `true` | Run browser headless |
+| `OPARL_SCRAPER_DELAY_MS` | `1500` | Pause between requests (rate limiting) |
 
 ## Common commands
 ```bash
 # Install
-pip install -e ".[dev]"
-playwright install chromium
+uv sync
+uv run playwright install chromium
 
 # Run API server
-oparl-bridge
-# or: uvicorn oparl_bridge.main:app --reload
+uv run oparl-bridge
 
 # Sync data from ALLRIS
-oparl-bridge-sync sync-orgs   # committees only
-oparl-bridge-sync sync        # full sync
+uv run oparl-bridge-sync sync-orgs   # committees only
+uv run oparl-bridge-sync sync        # full sync
 
 # Tests
-pytest
+uv run --extra dev python -m pytest
+
+# Lint
+uv run --extra dev ruff check src/
 ```
 
 ## Key design decisions
@@ -87,6 +89,9 @@ pytest
 - **No PDF storage**: Files have `accessUrl` pointing to ALLRIS `/allris/doc/<id>` endpoints
 - **Pydantic v2**: All OParl objects validated via Pydantic; use `model_dump(by_alias=True)` for JSON output
 - **SQLAlchemy 2.0 style**: Use `Mapped[]` type annotations, not legacy `Column()`
+- **URL derivation**: `OParlMapper` is instantiated per-request via FastAPI dependency injection, using `request.base_url` so URLs in responses reflect the actual hostname/scheme
+- **Rate limiting**: `AllrisScraper._goto()` sleeps `OPARL_SCRAPER_DELAY_MS` before every `page.goto()` call
+- **gr010 table structure**: Columns are Name | Mitglieder | Letzte Sitzung | Nächste Sitzung — no short name or organization type available on that page
 
 ## OParl spec
 https://dev.oparl.org/spezifikation/
