@@ -123,10 +123,10 @@ class AllrisScraper:
     async def scrape_meeting_detail(
         self, meeting_id: int
     ) -> tuple[ScrapedMeeting, list[ScrapedAgendaItem]]:
-        """Scrape a meeting detail page (si020) including agenda items."""
+        """Scrape a meeting detail page (to010) including agenda items."""
         page = await self._new_page()
         try:
-            await self._goto(page, self._url(f"/si020?SILFDNR={meeting_id}"))
+            await self._goto(page, self._url(f"/to010?SILFDNR={meeting_id}&refresh=false"))
             meeting = await _parse_meeting_detail(page, meeting_id)
             agenda_items = await _parse_agenda_items(page)
             return meeting, agenda_items
@@ -227,40 +227,37 @@ async def _parse_meetings(page: Page, organization_id: int | None) -> list[Scrap
 
 
 async def _parse_meeting_detail(page: Page, meeting_id: int) -> ScrapedMeeting:
-    """Parse the header block of a si020 meeting detail page."""
+    """Parse the header block of a to010 meeting detail page.
+
+    to010 dt labels: Betreff, Gremium, Datum, Status, Uhrzeit, Anlass, Raum, Ort
+    """
     name = ""
-    start_str = None
-    location = None
+    raum = None
+    ort = None
 
-    # Try to find meeting title in heading tags
-    for selector in ["h1", "h2", ".sitzung-title", "#sitzungstitel"]:
-        el = await page.query_selector(selector)
-        if el:
-            text = (await el.inner_text()).strip()
-            if text:
-                name = text
-                break
+    # Use only dt elements — th elements in the agenda table share the same
+    # labels (e.g. "Betreff") and would overwrite the correctly parsed values.
+    dts = await page.query_selector_all("dt")
+    for dt in dts:
+        label = (await dt.inner_text()).strip().lower().rstrip(":")
+        sibling = await dt.evaluate_handle("(el) => el.nextElementSibling")
+        elem = sibling.as_element()
+        value = (await elem.inner_text()).strip() if elem else ""
+        if label == "betreff":
+            name = value
+        elif label == "raum":
+            raum = value or None
+        elif label == "ort":
+            ort = value or None
 
-    # Fallback: grab the page title
+    # Combine room and address into a single location string
+    location_parts = [p for p in [raum, ort] if p]
+    location = ", ".join(location_parts) or None
+
     if not name:
         name = (await page.title()).strip()
 
-    # Look for date/time and location in definition lists or tables
-    dts = await page.query_selector_all("dt, th")
-    for dt in dts:
-        label = (await dt.inner_text()).strip().lower()
-        sibling = await dt.evaluate_handle(
-            "(el) => el.nextElementSibling"
-        )
-        if sibling:
-            elem = sibling.as_element()
-            value = (await elem.inner_text()).strip() if elem else ""
-            if "datum" in label or "termin" in label:
-                start_str = _parse_german_datetime(value)
-            elif "ort" in label or "raum" in label:
-                location = value or None
-
-    return ScrapedMeeting(id=meeting_id, name=name, start=start_str, location=location)
+    return ScrapedMeeting(id=meeting_id, name=name, location=location)
 
 
 async def _parse_agenda_items(page: Page) -> list[ScrapedAgendaItem]:
