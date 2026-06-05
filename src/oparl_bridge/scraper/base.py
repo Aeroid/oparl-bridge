@@ -75,10 +75,20 @@ class AllrisScraper:
             try:
                 yield self
             finally:
+                await self._save_cookies()
                 await self._context.close()
                 await self._browser.close()
                 self._browser = None
                 self._context = None
+
+    async def _save_cookies(self) -> None:
+        """Persist Wicket session cookies so the PDF proxy can reuse them."""
+        if self._context is None:
+            return
+        import json
+        from pathlib import Path
+        cookies = await self._context.cookies()
+        Path("oparl_cookies.json").write_text(json.dumps(cookies))
 
     async def _new_page(self) -> Page:
         if self._context is None:

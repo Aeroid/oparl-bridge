@@ -8,62 +8,116 @@
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
     <style>
         [x-cloak] { display: none !important; }
+
         .breadcrumb { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
         .breadcrumb span { color: var(--pico-muted-color); }
-        .nonpublic { color: var(--pico-muted-color); }
+        .nonpublic td { color: var(--pico-muted-color); }
         .files { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-        .files a { font-size: 0.85em; white-space: nowrap; }
+        .files a, .files button { font-size: 0.85em; white-space: nowrap; }
+
+        /* Search highlight */
+        mark { background: #fff3cd; padding: 0 2px; border-radius: 2px; }
+
+        /* Split layout for wide screens */
+        .split-layout {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            height: calc(100vh - 12rem);
+        }
+        .split-content { overflow-y: auto; }
+        .split-pdf { position: sticky; top: 0; height: calc(100vh - 12rem); }
+        .split-pdf iframe {
+            width: 100%;
+            height: 100%;
+            border: 1px solid var(--pico-muted-border-color);
+            border-radius: var(--pico-border-radius);
+            background: #f5f5f5;
+        }
+        .split-pdf .pdf-placeholder {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px dashed var(--pico-muted-border-color);
+            border-radius: var(--pico-border-radius);
+            color: var(--pico-muted-color);
+            font-size: 0.9em;
+            text-align: center;
+            padding: 2rem;
+        }
+
+        footer { margin-top: 3rem; padding-top: 1rem;
+                 border-top: 1px solid var(--pico-muted-border-color); }
         td { vertical-align: top; }
-        footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--pico-muted-border-color); }
+        input[type=search] { margin-bottom: 0; }
+
+        .search-result-meta { font-size: 0.8em; color: var(--pico-muted-color); }
     </style>
 </head>
 <body x-data="app()" x-init="init()" x-cloak>
 
 <header class="container-fluid">
     <hgroup>
-        <h1 x-text="body ? body.name : 'Ratsinformation'">Ratsinformation</h1>
+        <h1 x-text="body ? body.name : 'Ratsinformation'"></h1>
         <p x-show="body">
             Ratsinformationssystem ·
             <a :href="body?.website" target="_blank" x-text="body?.website"></a>
         </p>
     </hgroup>
 
-    <nav class="breadcrumb" aria-label="Breadcrumb">
-        <a href="#" @click.prevent="goOrgs()">Gremien</a>
-        <template x-if="selectedOrg">
-            <span>›</span>
-        </template>
-        <template x-if="selectedOrg && !meeting">
-            <span x-text="selectedOrg.name"></span>
-        </template>
-        <template x-if="selectedOrg && meeting">
-            <a href="#" @click.prevent="goMeetings()" x-text="selectedOrg.name"></a>
-        </template>
-        <template x-if="meeting">
-            <span>›</span>
-        </template>
-        <template x-if="meeting">
-            <span x-text="meeting.name"></span>
-        </template>
-    </nav>
+    <div style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap; margin-bottom:0.5rem;">
+        <nav class="breadcrumb" aria-label="Breadcrumb">
+            <a href="#" @click.prevent="goOrgs()">Gremien</a>
+            <template x-if="selectedOrg">
+                <span>›</span>
+            </template>
+            <template x-if="selectedOrg && !meeting">
+                <span x-text="selectedOrg.orgName"></span>
+            </template>
+            <template x-if="selectedOrg && meeting">
+                <a href="#" @click.prevent="goMeetings()" x-text="selectedOrg.orgName"></a>
+            </template>
+            <template x-if="meeting">
+                <span>›</span>
+            </template>
+            <template x-if="meeting">
+                <span x-text="meeting.name"></span>
+            </template>
+        </nav>
+
+        <input type="search" placeholder="Suche…" x-model="query"
+               @input="onSearch()" style="max-width:24rem;"
+               :disabled="!allLoaded">
+        <small x-show="!allLoaded && loadingAll" style="color:var(--pico-muted-color)">
+            Lade Suchindex…
+        </small>
+    </div>
 </header>
 
 <main class="container-fluid">
-    <div x-show="loading" aria-busy="true" style="text-align:center; padding: 2rem;"></div>
+    <div x-show="loading" aria-busy="true" style="text-align:center;padding:2rem;"></div>
 
-    <!-- Organisations -->
-    <template x-if="view === 'orgs' && !loading">
+    <!-- Search results -->
+    <template x-if="query.trim() && !loading">
         <section>
-            <h2>Gremien</h2>
-            <table>
+            <p x-show="searchResults.length === 0">Keine Ergebnisse für „<span x-text="query"></span>".</p>
+            <table x-show="searchResults.length > 0">
                 <thead>
-                    <tr><th>Gremium</th></tr>
+                    <tr><th>Sitzung</th><th>Gremium</th><th>TOP</th><th>Betreff</th></tr>
                 </thead>
                 <tbody>
-                    <template x-for="org in orgs" :key="org.id">
-                        <tr>
+                    <template x-for="r in searchResults" :key="r.key">
+                        <tr style="cursor:pointer" @click="openSearchResult(r)">
+                            <td style="white-space:nowrap" x-text="formatDate(r.start)"></td>
+                            <td x-text="r.orgName"></td>
+                            <td x-text="r.number || '—'"></td>
                             <td>
-                                <a href="#" @click.prevent="showMeetings(org)" x-text="org.name"></a>
+                                <span x-html="highlight(r.name)"></span>
+                                <template x-if="r.paperRef">
+                                    <small class="search-result-meta"> · <span x-html="highlight(r.paperRef)"></span></small>
+                                </template>
                             </td>
                         </tr>
                     </template>
@@ -72,25 +126,42 @@
         </section>
     </template>
 
-    <!-- Meetings -->
-    <template x-if="view === 'meetings' && !loading">
+    <!-- Organisations -->
+    <template x-if="view === 'orgs' && !loading && !query.trim()">
         <section>
-            <h2 x-text="selectedOrg?.name"></h2>
-            <template x-if="meetings.length === 0">
-                <p>Keine Sitzungen gefunden.</p>
-            </template>
-            <table x-show="meetings.length > 0">
-                <thead>
-                    <tr><th>Datum</th><th>Sitzung</th></tr>
-                </thead>
+            <h2>Gremien</h2>
+            <table>
+                <thead><tr><th>Gremium</th></tr></thead>
                 <tbody>
-                    <template x-for="mtg in meetings" :key="mtg.id">
+                    <template x-for="org in orgs" :key="org.orgId">
+                        <tr>
+                            <td>
+                                <a href="#" @click.prevent="showMeetings(org)"
+                                   x-text="org.orgName"></a>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </section>
+    </template>
+
+    <!-- Meetings list -->
+    <template x-if="view === 'meetings' && !loading && !query.trim()">
+        <section>
+            <h2 x-text="selectedOrg?.orgName"></h2>
+            <p x-show="filteredMeetings.length === 0">Keine Sitzungen gefunden.</p>
+            <table x-show="filteredMeetings.length > 0">
+                <thead><tr><th>Datum</th><th>Sitzung</th></tr></thead>
+                <tbody>
+                    <template x-for="mtg in filteredMeetings" :key="mtg.id">
                         <tr>
                             <td style="white-space:nowrap" x-text="formatDate(mtg.start)"></td>
                             <td>
-                                <a href="#" @click.prevent="showMeeting(mtg)" x-text="mtg.name"></a>
-                                <small x-show="mtg.location?.description">
-                                    · <span x-text="mtg.location?.description"></span>
+                                <a href="#" @click.prevent="showMeeting(mtg)"
+                                   x-text="mtg.name"></a>
+                                <small x-show="mtg.location">
+                                    · <span x-text="mtg.location"></span>
                                 </small>
                             </td>
                         </tr>
@@ -100,53 +171,80 @@
         </section>
     </template>
 
-    <!-- Meeting detail -->
-    <template x-if="view === 'meeting' && !loading">
-        <section>
-            <hgroup>
-                <h2 x-text="meeting.name"></h2>
-                <p>
-                    <span x-text="formatDate(meeting.start)"></span>
-                    <template x-if="meeting.location">
-                        <span> · <span x-text="meeting.location"></span></span>
-                    </template>
-                </p>
-            </hgroup>
+    <!-- Meeting detail (possibly split layout) -->
+    <template x-if="view === 'meeting' && !loading && !query.trim()">
+        <div :class="wide ? 'split-layout' : ''">
 
-            <template x-if="meeting.items.length === 0">
-                <p>Keine Tagesordnungspunkte vorhanden.</p>
-            </template>
+            <!-- Agenda content -->
+            <section :class="wide ? 'split-content' : ''">
+                <hgroup>
+                    <h2 x-text="meeting.name"></h2>
+                    <p>
+                        <span x-text="formatDate(meeting.start)"></span>
+                        <template x-if="meeting.location">
+                            <span> · <span x-text="meeting.location"></span></span>
+                        </template>
+                    </p>
+                </hgroup>
 
-            <table x-show="meeting.items.length > 0">
-                <thead>
-                    <tr>
-                        <th style="width:5em">TOP</th>
-                        <th>Betreff</th>
-                        <th>Vorlage</th>
-                        <th>Dokumente</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <template x-for="item in meeting.items" :key="item.id">
-                        <tr :class="item.public ? '' : 'nonpublic'">
-                            <td x-text="item.number || '—'"></td>
-                            <td>
-                                <span x-text="item.name"></span>
-                                <small x-show="!item.public"> (nichtöffentlich)</small>
-                            </td>
-                            <td x-text="item.paper?.reference || ''"></td>
-                            <td>
-                                <div class="files" x-show="item.paper?.files?.length">
-                                    <template x-for="file in (item.paper?.files || [])" :key="file.url">
-                                        <a :href="file.url" target="_blank" x-text="file.name"></a>
-                                    </template>
-                                </div>
-                            </td>
+                <p x-show="meeting.items.length === 0">Keine Tagesordnungspunkte vorhanden.</p>
+
+                <table x-show="meeting.items.length > 0">
+                    <thead>
+                        <tr>
+                            <th style="width:5em">TOP</th>
+                            <th>Betreff</th>
+                            <th>Vorlage</th>
+                            <th>Dokumente</th>
                         </tr>
-                    </template>
-                </tbody>
-            </table>
-        </section>
+                    </thead>
+                    <tbody>
+                        <template x-for="item in meeting.items" :key="item.id">
+                            <tr :class="item.public ? '' : 'nonpublic'">
+                                <td x-text="item.number || '—'"></td>
+                                <td>
+                                    <span x-text="item.name"></span>
+                                    <small x-show="!item.public"> (nichtöffentlich)</small>
+                                </td>
+                                <td x-text="item.paper?.reference || ''"></td>
+                                <td>
+                                    <div class="files" x-show="item.paper?.files?.length">
+                                        <template x-for="file in (item.paper?.files || [])" :key="file.id">
+                                            <!-- Wide: open in iframe; narrow: open in new tab -->
+                                            <template x-if="wide">
+                                                <button class="outline"
+                                                        @click="openPdf(file)"
+                                                        x-text="file.name"
+                                                        :aria-current="activePdfId === file.id ? 'true' : null">
+                                                </button>
+                                            </template>
+                                            <template x-if="!wide">
+                                                <a :href="proxyUrl(file.id)"
+                                                   target="_blank"
+                                                   x-text="file.name"></a>
+                                            </template>
+                                        </template>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- PDF panel (wide only) -->
+            <aside x-show="wide" class="split-pdf">
+                <template x-if="activePdfUrl">
+                    <iframe :src="activePdfUrl" title="Dokument"></iframe>
+                </template>
+                <template x-if="!activePdfUrl">
+                    <div class="pdf-placeholder">
+                        Dokument auswählen<br>
+                        <small>Klick auf einen Dateinamen öffnet die PDF hier</small>
+                    </div>
+                </template>
+            </aside>
+        </div>
     </template>
 </main>
 
@@ -163,52 +261,150 @@ function app() {
         body: null,
         view: 'orgs',
         loading: false,
-        orgs: [],
-        meetings: [],
-        meeting: null,
+
+        // Data
+        orgs: [],            // [{orgId, orgName}] deduplicated from allMeetings
+        allMeetings: [],     // full dataset from /ui/all
+        meetings: [],        // meetings for selected org
+        meeting: null,       // current detail view (from /ui/meeting/{id})
         selectedOrg: null,
 
+        // Search
+        query: '',
+        searchResults: [],
+        allLoaded: false,
+        loadingAll: false,
+
+        // PDF split view
+        wide: window.innerWidth > 1500,
+        activePdfUrl: null,
+        activePdfId: null,
+
         async init() {
+            window.addEventListener('resize', () => {
+                this.wide = window.innerWidth > 1500;
+            });
+
             this.loading = true;
             try {
-                const [bodyRes, orgsRes] = await Promise.all([
-                    fetch('/oparl/v1.1/body/1'),
-                    fetch('/oparl/v1.1/body/1/organizations'),
-                ]);
+                const bodyRes = await fetch('/oparl/v1.1/body/1');
                 this.body = await bodyRes.json();
-                const orgsData = await orgsRes.json();
-                this.orgs = orgsData.data.sort((a, b) =>
-                    a.name.localeCompare(b.name, 'de'));
             } finally {
                 this.loading = false;
             }
+
+            // Load full index in background for search
+            this.loadingAll = true;
+            fetch('/ui/all')
+                .then(r => r.json())
+                .then(data => {
+                    this.allMeetings = data.meetings;
+                    // Build org list from meetings
+                    const seen = new Map();
+                    for (const m of data.meetings) {
+                        if (m.orgId && !seen.has(m.orgId)) {
+                            seen.set(m.orgId, { orgId: m.orgId, orgName: m.orgName });
+                        }
+                    }
+                    this.orgs = [...seen.values()].sort((a, b) =>
+                        a.orgName.localeCompare(b.orgName, 'de'));
+                    this.allLoaded = true;
+                    this.loadingAll = false;
+                });
         },
 
-        async showMeetings(org) {
+        showMeetings(org) {
             this.selectedOrg = org;
             this.meeting = null;
+            this.activePdfUrl = null;
+            this.activePdfId = null;
             this.view = 'meetings';
-            this.loading = true;
-            try {
-                const orgId = org.id.split('/').pop();
-                const r = await fetch(`/oparl/v1.1/body/1/meetings?organization=${orgId}`);
-                const data = await r.json();
-                this.meetings = data.data.sort((a, b) =>
-                    (b.start || '').localeCompare(a.start || ''));
-            } finally {
-                this.loading = false;
-            }
+            this.meetings = this.allMeetings
+                .filter(m => m.orgId === org.orgId)
+                .sort((a, b) => (b.start || '').localeCompare(a.start || ''));
+        },
+
+        get filteredMeetings() {
+            return this.meetings;
         },
 
         async showMeeting(mtg) {
             this.view = 'meeting';
+            this.activePdfUrl = null;
+            this.activePdfId = null;
             this.loading = true;
             try {
-                const mtgId = mtg.id.split('/').pop();
-                const r = await fetch(`/ui/meeting/${mtgId}`);
+                const r = await fetch(`/ui/meeting/${mtg.id}`);
                 this.meeting = await r.json();
             } finally {
                 this.loading = false;
+            }
+        },
+
+        openPdf(file) {
+            this.activePdfId = file.id;
+            this.activePdfUrl = this.proxyUrl(file.id);
+        },
+
+        proxyUrl(fileId) {
+            return `/ui/proxy/file/${fileId}`;
+        },
+
+        onSearch() {
+            const q = this.query.trim().toLowerCase();
+            if (!q) { this.searchResults = []; return; }
+
+            const results = [];
+            for (const mtg of this.allMeetings) {
+                // Match on meeting name
+                if (mtg.name.toLowerCase().includes(q)) {
+                    results.push({
+                        key: `mtg-${mtg.id}`,
+                        type: 'meeting',
+                        mtgId: mtg.id,
+                        orgName: mtg.orgName,
+                        start: mtg.start,
+                        number: null,
+                        name: mtg.name,
+                        paperRef: null,
+                    });
+                }
+                // Match on agenda items
+                for (const item of mtg.items) {
+                    if (
+                        item.name.toLowerCase().includes(q) ||
+                        (item.paperRef && item.paperRef.toLowerCase().includes(q))
+                    ) {
+                        results.push({
+                            key: `ai-${item.id}`,
+                            type: 'item',
+                            mtgId: mtg.id,
+                            orgId: mtg.orgId,
+                            orgName: mtg.orgName,
+                            start: mtg.start,
+                            number: item.number,
+                            name: item.name,
+                            paperRef: item.paperRef,
+                        });
+                    }
+                }
+            }
+            // Sort: newest first, meetings before items
+            results.sort((a, b) => (b.start || '').localeCompare(a.start || ''));
+            this.searchResults = results.slice(0, 100);
+        },
+
+        async openSearchResult(r) {
+            this.query = '';
+            this.searchResults = [];
+            // Find the org for this meeting
+            const mtg = this.allMeetings.find(m => m.id === r.mtgId);
+            if (mtg) {
+                this.selectedOrg = { orgId: mtg.orgId, orgName: mtg.orgName };
+                this.meetings = this.allMeetings
+                    .filter(m => m.orgId === mtg.orgId)
+                    .sort((a, b) => (b.start || '').localeCompare(a.start || ''));
+                await this.showMeeting(mtg);
             }
         },
 
@@ -217,11 +413,21 @@ function app() {
             this.selectedOrg = null;
             this.meeting = null;
             this.meetings = [];
+            this.activePdfUrl = null;
+            this.activePdfId = null;
         },
 
         goMeetings() {
             this.view = 'meetings';
             this.meeting = null;
+            this.activePdfUrl = null;
+            this.activePdfId = null;
+        },
+
+        highlight(text) {
+            if (!text || !this.query.trim()) return text;
+            const q = this.query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            return text.replace(new RegExp(q, 'gi'), m => `<mark>${m}</mark>`);
         },
 
         formatDate(iso) {
@@ -234,6 +440,5 @@ function app() {
     };
 }
 </script>
-
 </body>
 </html>
