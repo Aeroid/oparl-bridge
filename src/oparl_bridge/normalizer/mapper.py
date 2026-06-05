@@ -72,6 +72,7 @@ class OParlMapper:
             else []
         )
         location = {"description": mtg.location} if mtg.location else None
+        agenda_items = [self._api(f"/oparl/v1.1/agendaitem/{ai.id}") for ai in mtg.agenda_items]
         return OParlMeeting(
             id=self._api(f"/oparl/v1.1/meeting/{mtg.id}"),
             type="https://schema.oparl.org/1.1/Meeting",
@@ -80,6 +81,7 @@ class OParlMapper:
             start=start,
             location=location,
             organization=organizations,
+            agendaItem=agenda_items,
             created=mtg.scraped_at,
             modified=mtg.scraped_at,
         )

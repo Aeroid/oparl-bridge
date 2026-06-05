@@ -29,6 +29,7 @@ class Meeting(Base):
     start: Mapped[datetime | None] = mapped_column(DateTime)
     location: Mapped[str | None] = mapped_column(String(500))
     scraped_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    detail_scraped_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     organization: Mapped["Organization | None"] = relationship(back_populates="meetings")
     agenda_items: Mapped[list["AgendaItem"]] = relationship(back_populates="meeting")

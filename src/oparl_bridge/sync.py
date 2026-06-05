@@ -43,19 +43,22 @@ async def sync_meetings(
 
     meetings = []
     for s in scraped:
-        mtg = db.get(Meeting, s.id)
-        if mtg is None:
-            mtg = Meeting(id=s.id)
+        is_new = db.get(Meeting, s.id) is None
+        mtg = db.get(Meeting, s.id) or Meeting(id=s.id)
+        if is_new:
             db.add(mtg)
         mtg.name = s.name
         mtg.organization_id = s.organization_id
-        mtg.location = s.location
         if s.start:
             from datetime import datetime as dt
             try:
                 mtg.start = dt.fromisoformat(s.start)
             except ValueError:
                 pass
+        # Reset detail_scraped_at for new meetings so detail scraper picks them up.
+        # Never clear it for existing meetings — that would re-scrape unnecessarily.
+        if is_new:
+            mtg.detail_scraped_at = None
         mtg.scraped_at = datetime.utcnow()
         meetings.append(mtg)
     db.commit()
@@ -64,17 +67,20 @@ async def sync_meetings(
 
 
 async def sync_meeting_details(scraper: AllrisScraper, db: Session) -> None:
-    """Scrape to010 detail pages for all meetings to fill in location."""
-    meetings = db.query(Meeting).all()
-    logger.info("Scraping details for %d meetings ...", len(meetings))
-    for mtg in meetings:
+    """Scrape to010 detail pages for meetings not yet detail-scraped."""
+    pending = db.query(Meeting).filter(Meeting.detail_scraped_at.is_(None)).all()
+    if not pending:
+        logger.info("All meeting details already up to date.")
+        return
+    logger.info("Scraping details for %d meetings ...", len(pending))
+    for mtg in pending:
         try:
-            scraped, agenda_items = await scraper.scrape_meeting_detail(mtg.id)
+            scraped, items = await scraper.scrape_meeting_detail(mtg.id)
             if scraped.location:
                 mtg.location = scraped.location
             if scraped.name:
                 mtg.name = scraped.name
-            for item in agenda_items:
+            for item in items:
                 ai = db.get(AgendaItem, item.id)
                 if ai is None:
                     ai = AgendaItem(id=item.id)
@@ -84,7 +90,7 @@ async def sync_meeting_details(scraper: AllrisScraper, db: Session) -> None:
                 ai.number = item.number
                 ai.public = item.public
                 ai.scraped_at = datetime.utcnow()
-            mtg.scraped_at = datetime.utcnow()
+            mtg.detail_scraped_at = datetime.utcnow()
         except Exception as exc:
             logger.warning("Failed to scrape detail for meeting %d: %s", mtg.id, exc)
     db.commit()
