@@ -54,6 +54,7 @@ class AgendaItem(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)  # TOLFDNR
     meeting_id: Mapped[int | None] = mapped_column(ForeignKey("meetings.id"))
     paper_id: Mapped[int | None] = mapped_column(ForeignKey("papers.id"))
+    paper_reference: Mapped[str | None] = mapped_column(String(100))  # e.g. "VO/26/04523"
     number: Mapped[str | None] = mapped_column(String(50))
     name: Mapped[str] = mapped_column(String(500))
     public: Mapped[bool] = mapped_column(default=True)

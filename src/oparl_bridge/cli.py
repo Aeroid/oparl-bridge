@@ -13,6 +13,8 @@ def main():
         print("Commands:")
         print("  sync          Full sync of all data")
         print("  sync-orgs     Sync organizations only")
+        print("  sync-papers   Sync papers/files for known agenda items")
+        print("  reset-details Reset detail_scraped_at (force re-scrape of all meeting details)")
         sys.exit(1)
 
     cmd = sys.argv[1]
@@ -20,6 +22,28 @@ def main():
     if cmd == "sync":
         from oparl_bridge.sync import run_full_sync
         asyncio.run(run_full_sync())
+    elif cmd == "sync-papers":
+        from oparl_bridge.db.session import SessionLocal, init_db
+        from oparl_bridge.scraper import AllrisScraper
+        from oparl_bridge.sync import sync_papers
+
+        async def _run_papers():
+            init_db()
+            scraper = AllrisScraper()
+            async with scraper.session():
+                with SessionLocal() as db:
+                    await sync_papers(scraper, db)
+
+        asyncio.run(_run_papers())
+    elif cmd == "reset-details":
+        from oparl_bridge.db.models import Meeting
+        from oparl_bridge.db.session import SessionLocal, init_db
+
+        init_db()
+        with SessionLocal() as db:
+            count = db.query(Meeting).update({Meeting.detail_scraped_at: None})
+            db.commit()
+            print(f"Reset detail_scraped_at for {count} meeting(s).")
     elif cmd == "sync-orgs":
         from oparl_bridge.db.session import SessionLocal, init_db
         from oparl_bridge.scraper import AllrisScraper

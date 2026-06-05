@@ -35,6 +35,13 @@ class ScrapedAgendaItem:
     number: str | None = None
     public: bool = True
     paper_id: int | None = None  # VOLFDNR
+    paper_reference: str | None = None  # e.g. "VO/26/04523"
+
+
+@dataclass
+class ScrapedFile:
+    name: str
+    url: str  # absolute URL
 
 
 @dataclass
@@ -43,7 +50,7 @@ class ScrapedPaper:
     name: str
     reference: str | None = None
     paper_type: str | None = None
-    file_urls: list[str] = field(default_factory=list)
+    files: list[ScrapedFile] = field(default_factory=list)
 
 
 class AllrisScraper:
@@ -262,20 +269,22 @@ async def _parse_meeting_detail(page: Page, meeting_id: int) -> ScrapedMeeting:
 
 async def _parse_agenda_items(page: Page) -> list[ScrapedAgendaItem]:
     """
-    Parse Tagesordnungspunkte from a si020 page.
+    Parse Tagesordnungspunkte from a to010 page.
 
-    Typical structure:
-      <tr>
-        <td>1.</td>
-        <td><a href="to020?TOLFDNR=456">Bürgeranfragen</a></td>
-        <td>öffentlich</td>
-      </tr>
+    to010 column structure:
+      cells[0]: +/- expand button
+      cells[1]: TOP number ("Ö 1", "N 2") — "N" prefix = nichtöffentlich
+      cells[2]: name with to020?TOLFDNR= link
+      cells[3]: empty
+      cells[4]: Vorlage reference — vo020?VOLFDNR= link (or to010 for Protokolle)
+      cells[5]: Beschlussart
     """
     results: list[ScrapedAgendaItem] = []
 
     rows = await page.query_selector_all("table tr")
     for row in rows:
-        link = await row.query_selector("a[href*='TOLFDNR']")
+        # Name link is in cells[2] (to020?TOLFDNR=...)
+        link = await row.query_selector("td:nth-child(3) a[href*='to020']")
         if link is None:
             continue
 
@@ -286,21 +295,20 @@ async def _parse_agenda_items(page: Page) -> list[ScrapedAgendaItem]:
 
         item_name = (await link.inner_text()).strip()
         cells = await row.query_selector_all("td")
-        number = None
-        public = True
 
-        if len(cells) >= 1:
-            number = (await cells[0].inner_text()).strip().rstrip(".") or None
-        if len(cells) >= 3:
-            visibility = (await cells[2].inner_text()).strip().lower()
-            public = "nichtöffentlich" not in visibility and "nicht öffentlich" not in visibility
+        number_text = (await cells[1].inner_text()).strip() if len(cells) > 1 else ""
+        number = number_text or None
+        # TOP numbers starting with "N" are nichtöffentlich ("N 1", "N 2", ...)
+        public = not number_text.upper().startswith("N ")
 
-        # Check for associated Vorlage link
-        vo_link = await row.query_selector("a[href*='VOLFDNR']")
         paper_id = None
-        if vo_link:
-            vo_href = await vo_link.get_attribute("href") or ""
-            paper_id = _extract_int_param(vo_href, "VOLFDNR")
+        paper_reference = None
+        if len(cells) > 4:
+            vo_link = await cells[4].query_selector("a[href*='vo020']")
+            if vo_link:
+                vo_href = await vo_link.get_attribute("href") or ""
+                paper_id = _extract_int_param(vo_href, "VOLFDNR")
+                paper_reference = (await vo_link.inner_text()).strip() or None
 
         results.append(
             ScrapedAgendaItem(
@@ -309,6 +317,7 @@ async def _parse_agenda_items(page: Page) -> list[ScrapedAgendaItem]:
                 number=number,
                 public=public,
                 paper_id=paper_id,
+                paper_reference=paper_reference,
             )
         )
     return results
@@ -319,50 +328,43 @@ async def _parse_paper(page: Page, paper_id: int) -> ScrapedPaper | None:
     name = ""
     reference = None
     paper_type = None
-    file_urls: list[str] = []
+    files: list[ScrapedFile] = []
 
-    for selector in ["h1", "h2", ".vorlage-title"]:
-        el = await page.query_selector(selector)
-        if el:
-            text = (await el.inner_text()).strip()
-            if text:
-                name = text
-                break
+    # vo020 dt labels: Betreff, Status, Vorlageart, Federführend, ...
+    dts = await page.query_selector_all("dt")
+    for dt in dts:
+        label = (await dt.inner_text()).strip().lower().rstrip(":")
+        sibling = (await dt.evaluate_handle("(el) => el.nextElementSibling")).as_element()
+        if sibling:
+            value = " ".join((await sibling.inner_text()).split())  # normalise whitespace
+            if label == "betreff":
+                name = value
+            elif label == "vorlageart":
+                paper_type = value or None
 
     if not name:
         name = (await page.title()).strip()
 
-    # Extract metadata from definition lists / tables
-    dts = await page.query_selector_all("dt, th")
-    for dt in dts:
-        label = (await dt.inner_text()).strip().lower()
-        sibling_handle = await dt.evaluate_handle("(el) => el.nextElementSibling")
-        sibling = sibling_handle.as_element()
-        if sibling:
-            value = (await sibling.inner_text()).strip()
-            if "drucksachen" in label or "vorlagen" in label or "az" in label:
-                reference = value or None
-            elif "art" in label or "typ" in label:
-                paper_type = value or None
-
-    # Collect PDF links
-    doc_links = await page.query_selector_all("a[href*='/allris/doc/'], a[href*='doc/']")
-    for doc_link in doc_links:
+    # PDF links use Wicket resource URLs: /allris/wicket/resource/.../doc<id>.pdf
+    seen: set[str] = set()
+    base = page.url.split("/allris/")[0]
+    for doc_link in await page.query_selector_all("a[href*='.pdf']"):
         href = await doc_link.get_attribute("href") or ""
-        if href and href not in file_urls:
-            # Make absolute
-            if href.startswith("http"):
-                file_urls.append(href)
-            else:
-                base = page.url.split("/allris/")[0]
-                file_urls.append(f"{base}/allris/{href.lstrip('/')}")
+        if not href:
+            continue
+        abs_url = href if href.startswith("http") else f"{base}/allris/{href.lstrip('/')}"
+        if abs_url in seen:
+            continue
+        seen.add(abs_url)
+        link_name = " ".join((await doc_link.inner_text()).split()) or href.rsplit("/", 1)[-1]
+        files.append(ScrapedFile(name=link_name, url=abs_url))
 
     return ScrapedPaper(
         id=paper_id,
         name=name,
         reference=reference,
         paper_type=paper_type,
-        file_urls=file_urls,
+        files=files,
     )
 
 

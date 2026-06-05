@@ -87,6 +87,12 @@ class OParlMapper:
         )
 
     def agenda_item(self, item: AgendaItem) -> OParlAgendaItem:
+        consultation = None
+        if item.paper_id:
+            consultation = {
+                "paper": self._api(f"/oparl/v1.1/paper/{item.paper_id}"),
+                "agendaItem": self._api(f"/oparl/v1.1/agendaitem/{item.id}"),
+            }
         return OParlAgendaItem(
             id=self._api(f"/oparl/v1.1/agendaitem/{item.id}"),
             type="https://schema.oparl.org/1.1/AgendaItem",
@@ -94,11 +100,13 @@ class OParlMapper:
             number=item.number,
             name=item.name,
             public=item.public,
+            consultation=consultation,
             created=item.scraped_at,
             modified=item.scraped_at,
         )
 
     def paper(self, p: Paper) -> OParlPaper:
+        file_urls = [self._api(f"/oparl/v1.1/file/{f.id}") for f in p.files]
         return OParlPaper(
             id=self._api(f"/oparl/v1.1/paper/{p.id}"),
             type="https://schema.oparl.org/1.1/Paper",
@@ -106,6 +114,8 @@ class OParlMapper:
             name=p.name,
             reference=p.reference,
             paperType=p.paper_type,
+            mainFile=file_urls[0] if file_urls else None,
+            auxiliaryFile=file_urls[1:],
             created=p.scraped_at,
             modified=p.scraped_at,
         )
