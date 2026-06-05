@@ -210,8 +210,9 @@
                                 <td>
                                     <div class="files" x-show="item.paper?.files?.length">
                                         <template x-for="file in (item.paper?.files || [])" :key="file.id">
-                                            <a href="#"
-                                               @click.prevent="wide ? openPdf(file) : window.open(proxyUrl(file.id), '_blank')"
+                                            <a :href="proxyUrl(file.id)"
+                                               target="_blank"
+                                               @click="wide && ($event.preventDefault(), openPdf(file))"
                                                x-text="file.name"
                                                :style="activePdfId === file.id ? 'font-weight:600' : ''"></a>
                                         </template>

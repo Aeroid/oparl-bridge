@@ -75,20 +75,10 @@ class AllrisScraper:
             try:
                 yield self
             finally:
-                await self._save_cookies()
                 await self._context.close()
                 await self._browser.close()
                 self._browser = None
                 self._context = None
-
-    async def _save_cookies(self) -> None:
-        """Persist Wicket session cookies so the PDF proxy can reuse them."""
-        if self._context is None:
-            return
-        import json
-        from pathlib import Path
-        cookies = await self._context.cookies()
-        Path("oparl_cookies.json").write_text(json.dumps(cookies))
 
     async def _new_page(self) -> Page:
         if self._context is None:
@@ -107,6 +97,49 @@ class AllrisScraper:
         if self.cfg.scraper_delay_ms > 0:
             await asyncio.sleep(self.cfg.scraper_delay_ms / 1000)
         await page.goto(url, wait_until="networkidle")
+
+    async def warmup(self) -> None:
+        """Visit gr010 to establish a Wicket session without parsing anything."""
+        page = await self._new_page()
+        try:
+            await self._goto(page, self._url("/gr010"))
+        finally:
+            await page.close()
+
+    async def fetch_file_content(self, paper_id: int, file_url: str) -> bytes | None:
+        """Fetch a PDF from ALLRIS by navigating to vo020 and intercepting the download.
+
+        Wicket resource URLs require the browser to be on an ALLRIS page when
+        the request is made. We navigate to vo020, set up a route interceptor
+        on the specific PDF URL, click the matching link, and capture the bytes.
+        """
+        page = await self._new_page()
+        try:
+            # Session warmup (no rate-limiting delay needed — single fetch)
+            await page.goto(self._url("/gr010"), wait_until="networkidle")
+            await page.goto(self._url(f"/vo020?VOLFDNR={paper_id}"), wait_until="networkidle")
+
+            captured: asyncio.Future = asyncio.get_running_loop().create_future()
+            filename = file_url.rsplit("/", 1)[-1]
+
+            async def handle_route(route):
+                resp = await route.fetch()
+                body = await resp.body()
+                if not captured.done():
+                    captured.set_result((resp.status, body))
+                await route.fulfill(response=resp)
+
+            await page.route(f"**/{filename}", handle_route)
+
+            link = await page.query_selector(f'a[href*="{filename}"]')
+            if link is None:
+                return None
+            await link.click()
+
+            status, body = await asyncio.wait_for(captured, timeout=15)
+            return body if status == 200 else None
+        finally:
+            await page.close()
 
     async def scrape_organizations(self) -> list[ScrapedOrganization]:
         """Scrape the committee list from gr010."""

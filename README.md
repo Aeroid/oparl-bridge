@@ -22,7 +22,7 @@ ALLRIS (Wicket/Ajax)
 meine-stadt-transparent  ← (or any OParl-compatible frontend)
 ```
 
-PDFs are **not** fetched or stored. Files carry an `accessUrl` back to ALLRIS; the browser UI proxies PDFs on demand using stored session cookies.
+PDFs are **not** fetched or stored. Files carry an `accessUrl` back to ALLRIS; the browser UI proxies PDFs on demand by launching a headless Playwright browser, navigating to the paper page, and intercepting the PDF download — the only approach that works with Wicket's session-scoped resource URLs.
 
 ## Supported ALLRIS objects → OParl mapping
 
@@ -99,7 +99,7 @@ The SPA at `/` provides a navigable view of the scraped data:
 - **Search**: live full-text search across all meetings, agenda items, and Vorlage references — index loads in the background, all filtering is client-side (no server requests per keystroke)
 - **Wide screens (>1500 px)**: PDF opens in a split-view iframe panel; narrower screens open PDFs in a new tab
 
-PDFs are served via `/ui/proxy/file/{id}`, which uses the Wicket session cookies saved after each sync run. If the session expires, run `uv run oparl-bridge-sync sync-orgs` to refresh.
+PDFs are served via `/ui/proxy/file/{id}`. Each request launches a headless Playwright browser, navigates to the paper's vo020 page, and intercepts the PDF download. This is ~3–5 s per click but requires no pre-stored cookies.
 
 ## OParl endpoints
 
