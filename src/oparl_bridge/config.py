@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     body_website: str = "https://www.neu-wulmstorf.de"
     scraper_timeout_ms: int = 30000
     scraper_headless: bool = True
+    scraper_delay_ms: int = 1500
 
 
 settings = Settings()

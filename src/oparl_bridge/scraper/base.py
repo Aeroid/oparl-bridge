@@ -1,5 +1,6 @@
 """Playwright-based scraper for ALLRIS Wicket applications."""
 
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -84,11 +85,17 @@ class AllrisScraper:
     def _url(self, path: str) -> str:
         return f"{self.cfg.allris_base_url.rstrip('/')}/{path.lstrip('/')}"
 
+    async def _goto(self, page: Page, url: str) -> None:
+        """Navigate to a URL, respecting the configured inter-request delay."""
+        if self.cfg.scraper_delay_ms > 0:
+            await asyncio.sleep(self.cfg.scraper_delay_ms / 1000)
+        await page.goto(url, wait_until="networkidle")
+
     async def scrape_organizations(self) -> list[ScrapedOrganization]:
         """Scrape the committee list from gr010."""
         page = await self._new_page()
         try:
-            await page.goto(self._url("/gr010"), wait_until="networkidle")
+            await self._goto(page, self._url("/gr010"))
             return await _parse_organizations(page)
         finally:
             await page.close()
@@ -99,10 +106,7 @@ class AllrisScraper:
         """Scrape meetings for a specific committee from si018."""
         page = await self._new_page()
         try:
-            await page.goto(
-                self._url(f"/si018?GRLFDNR={organization_id}"),
-                wait_until="networkidle",
-            )
+            await self._goto(page, self._url(f"/si018?GRLFDNR={organization_id}"))
             return await _parse_meetings(page, organization_id)
         finally:
             await page.close()
@@ -111,7 +115,7 @@ class AllrisScraper:
         """Scrape the full meeting calendar from si010."""
         page = await self._new_page()
         try:
-            await page.goto(self._url("/si010"), wait_until="networkidle")
+            await self._goto(page, self._url("/si010"))
             return await _parse_meetings(page, organization_id=None)
         finally:
             await page.close()
@@ -122,10 +126,7 @@ class AllrisScraper:
         """Scrape a meeting detail page (si020) including agenda items."""
         page = await self._new_page()
         try:
-            await page.goto(
-                self._url(f"/si020?SILFDNR={meeting_id}"),
-                wait_until="networkidle",
-            )
+            await self._goto(page, self._url(f"/si020?SILFDNR={meeting_id}"))
             meeting = await _parse_meeting_detail(page, meeting_id)
             agenda_items = await _parse_agenda_items(page)
             return meeting, agenda_items
@@ -136,10 +137,7 @@ class AllrisScraper:
         """Scrape a Vorlage/Drucksache detail page (vo020)."""
         page = await self._new_page()
         try:
-            await page.goto(
-                self._url(f"/vo020?VOLFDNR={paper_id}"),
-                wait_until="networkidle",
-            )
+            await self._goto(page, self._url(f"/vo020?VOLFDNR={paper_id}"))
             return await _parse_paper(page, paper_id)
         finally:
             await page.close()
