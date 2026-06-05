@@ -1,8 +1,9 @@
 """Maps DB models to OParl 1.1 Pydantic objects."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from oparl_bridge.config import Settings, settings as default_settings
+from oparl_bridge.config import Settings
+from oparl_bridge.config import settings as default_settings
 from oparl_bridge.db.models import AgendaItem, File, Meeting, Organization, Paper
 from oparl_bridge.normalizer.oparl_schema import (
     OParlAgendaItem,
@@ -120,5 +121,5 @@ def _ensure_aware(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
     return dt

@@ -3,8 +3,7 @@
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import AnyHttpUrl, BaseModel, Field
-
+from pydantic import BaseModel, Field
 
 # OParl uses string URLs as IDs; alias them for clarity
 OParlUrl = Annotated[str, Field()]
@@ -108,7 +107,9 @@ class OParlPaper(OParlBase):
     location: list[dict] = Field(default_factory=list)
     originator_person: list[OParlUrl] = Field(default_factory=list, alias="originatorPerson")
     under_direction_of: list[OParlUrl] = Field(default_factory=list, alias="underDirectionOf")
-    originator_organization: list[OParlUrl] = Field(default_factory=list, alias="originatorOrganization")
+    originator_organization: list[OParlUrl] = Field(
+        default_factory=list, alias="originatorOrganization"
+    )
     consultation: list[dict] = Field(default_factory=list)
 
 

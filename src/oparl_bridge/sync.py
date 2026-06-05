@@ -5,7 +5,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from oparl_bridge.db.models import AgendaItem, File, Meeting, Organization, Paper
+from oparl_bridge.db.models import Meeting, Organization
 from oparl_bridge.db.session import SessionLocal, init_db
 from oparl_bridge.scraper import AllrisScraper
 
@@ -31,7 +31,9 @@ async def sync_organizations(scraper: AllrisScraper, db: Session) -> list[Organi
     return orgs
 
 
-async def sync_meetings(scraper: AllrisScraper, db: Session, organization_id: int | None = None) -> list[Meeting]:
+async def sync_meetings(
+    scraper: AllrisScraper, db: Session, organization_id: int | None = None
+) -> list[Meeting]:
     if organization_id is not None:
         logger.info("Scraping meetings for organization %d ...", organization_id)
         scraped = await scraper.scrape_meetings_for_organization(organization_id)

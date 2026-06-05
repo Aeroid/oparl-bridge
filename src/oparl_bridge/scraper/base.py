@@ -1,12 +1,13 @@
 """Playwright-based scraper for ALLRIS Wicket applications."""
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import AsyncGenerator
 
 from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
-from oparl_bridge.config import Settings, settings as default_settings
+from oparl_bridge.config import Settings
+from oparl_bridge.config import settings as default_settings
 
 
 @dataclass
@@ -73,7 +74,9 @@ class AllrisScraper:
 
     async def _new_page(self) -> Page:
         if self._context is None:
-            raise RuntimeError("Scraper must be used inside an `async with scraper.session()` block")
+            raise RuntimeError(
+                "Scraper must be used inside an `async with scraper.session()` block"
+            )
         page = await self._context.new_page()
         page.set_default_timeout(self.cfg.scraper_timeout_ms)
         return page
@@ -113,7 +116,9 @@ class AllrisScraper:
         finally:
             await page.close()
 
-    async def scrape_meeting_detail(self, meeting_id: int) -> tuple[ScrapedMeeting, list[ScrapedAgendaItem]]:
+    async def scrape_meeting_detail(
+        self, meeting_id: int
+    ) -> tuple[ScrapedMeeting, list[ScrapedAgendaItem]]:
         """Scrape a meeting detail page (si020) including agenda items."""
         page = await self._new_page()
         try:
@@ -265,7 +270,8 @@ async def _parse_meeting_detail(page: Page, meeting_id: int) -> ScrapedMeeting:
             "(el) => el.nextElementSibling"
         )
         if sibling:
-            value = (await sibling.as_element().inner_text()).strip() if sibling.as_element() else ""
+            elem = sibling.as_element()
+            value = (await elem.inner_text()).strip() if elem else ""
             if "datum" in label or "termin" in label:
                 start_str = _parse_german_datetime(value)
             elif "ort" in label or "raum" in label:
