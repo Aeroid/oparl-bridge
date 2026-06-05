@@ -17,11 +17,12 @@ from oparl_bridge.normalizer.oparl_schema import (
 
 
 class OParlMapper:
-    def __init__(self, cfg: Settings = default_settings) -> None:
+    def __init__(self, cfg: Settings = default_settings, base_url: str | None = None) -> None:
         self.cfg = cfg
+        self._base_url = (base_url or cfg.api_base_url).rstrip("/")
 
     def _api(self, path: str) -> str:
-        return f"{self.cfg.api_base_url.rstrip('/')}/{path.lstrip('/')}"
+        return f"{self._base_url}/{path.lstrip('/')}"
 
     def _allris(self, path: str) -> str:
         return f"{self.cfg.allris_base_url.rstrip('/')}/{path.lstrip('/')}"
