@@ -18,7 +18,9 @@ ALLRIS (Wicket/Ajax)  →  Playwright scraper  →  SQLite (metadata)  →  Fast
 - **Scraper**: `src/oparl_bridge/scraper/` — async Playwright, navigates Wicket UI
 - **Normalizer**: `src/oparl_bridge/normalizer/` — ALLRIS → OParl 1.1 Pydantic models
 - **DB**: `src/oparl_bridge/db/` — SQLAlchemy + SQLite, metadata only (~50MB)
-- **API**: `src/oparl_bridge/api/` — FastAPI, OParl 1.1 REST endpoints
+- **API**: `src/oparl_bridge/api/routes.py` — FastAPI, OParl 1.1 REST endpoints
+- **UI API**: `src/oparl_bridge/api/ui.py` — denormalised endpoints for the SPA (not OParl-compliant)
+- **SPA**: `src/oparl_bridge/static/index.html` — Alpine.js + PicoCSS browser UI served at `/`
 - **Sync**: `src/oparl_bridge/sync.py` — orchestrates scrape → persist
 - **CLI**: `src/oparl_bridge/cli.py` — `oparl-bridge-sync` command
 
@@ -88,6 +90,14 @@ uv run --extra dev python -m pytest
 uv run --extra dev ruff check src/
 ```
 
+## UI API endpoints (non-OParl, SPA-facing)
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | Serves `static/index.html` (Alpine.js SPA) |
+| `GET /ui/all` | All meetings + agenda items in one response — used for client-side search index |
+| `GET /ui/meeting/{id}` | Meeting with inlined agenda items, papers, and file URLs |
+| `GET /ui/proxy/file/{id}` | Streams PDF from ALLRIS using stored Wicket session cookies (`oparl_cookies.json`) |
+
 ## Key design decisions
 - **One Body per instance**: oparl-bridge is deployed per ALLRIS instance; Body ID is always `/oparl/v1.1/body/1`
 - **IDs from ALLRIS**: OParl numeric IDs are the ALLRIS integer IDs (GRLFDNR, SILFDNR, etc.)
@@ -101,6 +111,9 @@ uv run --extra dev ruff check src/
 - **SQLite migrations**: `init_db()` calls `_migrate()` which uses `ALTER TABLE` to add new columns to existing DBs. No Alembic.
 - **dt-only parsing**: `_parse_meeting_detail` and `_parse_paper` query only `dt` elements, not `th`. The agenda table on to010 has a `th` named "Betreff" which would overwrite the correctly parsed meeting name.
 - **AgendaItem paper link**: `AgendaItem.paper_id` (VOLFDNR FK) and `paper_reference` (link text) are populated from to010 cells[4] during `sync_meeting_details`. The `consultation` field in the OParl API response links to the paper URL.
+- **PDF proxy**: `AllrisScraper._save_cookies()` writes `oparl_cookies.json` (JSESSIONID) after every session teardown. `/ui/proxy/file/{id}` reads these cookies and streams the PDF via httpx. Session expires when ALLRIS invalidates it — re-run `sync-orgs` to refresh.
+- **SPA search**: `/ui/all` is fetched once in the background after page load. All filtering happens client-side (Alpine.js). No server requests per keystroke. Results cover meeting names, TOP names, and Vorlage references.
+- **Responsive split layout**: SPA detects `window.innerWidth > 1500`. Above that threshold, meeting detail shows a sticky PDF iframe panel on the right. Below it, PDF links open in a new tab. PDF is loaded via the proxy endpoint.
 
 ## OParl spec
 https://dev.oparl.org/spezifikation/
