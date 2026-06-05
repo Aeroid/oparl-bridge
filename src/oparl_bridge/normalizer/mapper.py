@@ -92,6 +92,7 @@ class OParlMapper:
             consultation = {
                 "paper": self._api(f"/oparl/v1.1/paper/{item.paper_id}"),
                 "agendaItem": self._api(f"/oparl/v1.1/agendaitem/{item.id}"),
+                "paperReference": item.paper_reference,
             }
         return OParlAgendaItem(
             id=self._api(f"/oparl/v1.1/agendaitem/{item.id}"),

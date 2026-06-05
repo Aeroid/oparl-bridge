@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ratsinformation</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+    <style>
+        [x-cloak] { display: none !important; }
+        .breadcrumb { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+        .breadcrumb span { color: var(--pico-muted-color); }
+        .nonpublic { color: var(--pico-muted-color); }
+        .files { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        .files a { font-size: 0.85em; white-space: nowrap; }
+        td { vertical-align: top; }
+        footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--pico-muted-border-color); }
+    </style>
+</head>
+<body x-data="app()" x-init="init()" x-cloak>
+
+<header class="container-fluid">
+    <hgroup>
+        <h1 x-text="body ? body.name : 'Ratsinformation'">Ratsinformation</h1>
+        <p x-show="body">
+            Ratsinformationssystem ·
+            <a :href="body?.website" target="_blank" x-text="body?.website"></a>
+        </p>
+    </hgroup>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="#" @click.prevent="goOrgs()">Gremien</a>
+        <template x-if="selectedOrg">
+            <span>›</span>
+        </template>
+        <template x-if="selectedOrg && !meeting">
+            <span x-text="selectedOrg.name"></span>
+        </template>
+        <template x-if="selectedOrg && meeting">
+            <a href="#" @click.prevent="goMeetings()" x-text="selectedOrg.name"></a>
+        </template>
+        <template x-if="meeting">
+            <span>›</span>
+        </template>
+        <template x-if="meeting">
+            <span x-text="meeting.name"></span>
+        </template>
+    </nav>
+</header>
+
+<main class="container-fluid">
+    <div x-show="loading" aria-busy="true" style="text-align:center; padding: 2rem;"></div>
+
+    <!-- Organisations -->
+    <template x-if="view === 'orgs' && !loading">
+        <section>
+            <h2>Gremien</h2>
+            <table>
+                <thead>
+                    <tr><th>Gremium</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="org in orgs" :key="org.id">
+                        <tr>
+                            <td>
+                                <a href="#" @click.prevent="showMeetings(org)" x-text="org.name"></a>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </section>
+    </template>
+
+    <!-- Meetings -->
+    <template x-if="view === 'meetings' && !loading">
+        <section>
+            <h2 x-text="selectedOrg?.name"></h2>
+            <template x-if="meetings.length === 0">
+                <p>Keine Sitzungen gefunden.</p>
+            </template>
+            <table x-show="meetings.length > 0">
+                <thead>
+                    <tr><th>Datum</th><th>Sitzung</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="mtg in meetings" :key="mtg.id">
+                        <tr>
+                            <td style="white-space:nowrap" x-text="formatDate(mtg.start)"></td>
+                            <td>
+                                <a href="#" @click.prevent="showMeeting(mtg)" x-text="mtg.name"></a>
+                                <small x-show="mtg.location?.description">
+                                    · <span x-text="mtg.location?.description"></span>
+                                </small>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </section>
+    </template>
+
+    <!-- Meeting detail -->
+    <template x-if="view === 'meeting' && !loading">
+        <section>
+            <hgroup>
+                <h2 x-text="meeting.name"></h2>
+                <p>
+                    <span x-text="formatDate(meeting.start)"></span>
+                    <template x-if="meeting.location">
+                        <span> · <span x-text="meeting.location"></span></span>
+                    </template>
+                </p>
+            </hgroup>
+
+            <template x-if="meeting.items.length === 0">
+                <p>Keine Tagesordnungspunkte vorhanden.</p>
+            </template>
+
+            <table x-show="meeting.items.length > 0">
+                <thead>
+                    <tr>
+                        <th style="width:5em">TOP</th>
+                        <th>Betreff</th>
+                        <th>Vorlage</th>
+                        <th>Dokumente</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="item in meeting.items" :key="item.id">
+                        <tr :class="item.public ? '' : 'nonpublic'">
+                            <td x-text="item.number || '—'"></td>
+                            <td>
+                                <span x-text="item.name"></span>
+                                <small x-show="!item.public"> (nichtöffentlich)</small>
+                            </td>
+                            <td x-text="item.paper?.reference || ''"></td>
+                            <td>
+                                <div class="files" x-show="item.paper?.files?.length">
+                                    <template x-for="file in (item.paper?.files || [])" :key="file.url">
+                                        <a :href="file.url" target="_blank" x-text="file.name"></a>
+                                    </template>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </section>
+    </template>
+</main>
+
+<footer class="container-fluid">
+    <small>
+        <a href="/oparl/v1.1" target="_blank">OParl API</a> ·
+        <a href="/docs" target="_blank">API Docs</a>
+    </small>
+</footer>
+
+<script>
+function app() {
+    return {
+        body: null,
+        view: 'orgs',
+        loading: false,
+        orgs: [],
+        meetings: [],
+        meeting: null,
+        selectedOrg: null,
+
+        async init() {
+            this.loading = true;
+            try {
+                const [bodyRes, orgsRes] = await Promise.all([
+                    fetch('/oparl/v1.1/body/1'),
+                    fetch('/oparl/v1.1/body/1/organizations'),
+                ]);
+                this.body = await bodyRes.json();
+                const orgsData = await orgsRes.json();
+                this.orgs = orgsData.data.sort((a, b) =>
+                    a.name.localeCompare(b.name, 'de'));
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        async showMeetings(org) {
+            this.selectedOrg = org;
+            this.meeting = null;
+            this.view = 'meetings';
+            this.loading = true;
+            try {
+                const orgId = org.id.split('/').pop();
+                const r = await fetch(`/oparl/v1.1/body/1/meetings?organization=${orgId}`);
+                const data = await r.json();
+                this.meetings = data.data.sort((a, b) =>
+                    (b.start || '').localeCompare(a.start || ''));
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        async showMeeting(mtg) {
+            this.view = 'meeting';
+            this.loading = true;
+            try {
+                const mtgId = mtg.id.split('/').pop();
+                const r = await fetch(`/ui/meeting/${mtgId}`);
+                this.meeting = await r.json();
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        goOrgs() {
+            this.view = 'orgs';
+            this.selectedOrg = null;
+            this.meeting = null;
+            this.meetings = [];
+        },
+
+        goMeetings() {
+            this.view = 'meetings';
+            this.meeting = null;
+        },
+
+        formatDate(iso) {
+            if (!iso) return '—';
+            return new Date(iso).toLocaleString('de-DE', {
+                weekday: 'short', year: 'numeric', month: '2-digit',
+                day: '2-digit', hour: '2-digit', minute: '2-digit',
+            });
+        },
+    };
+}
+</script>
+
+</body>
+</html>

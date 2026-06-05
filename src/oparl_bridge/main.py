@@ -2,14 +2,19 @@
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from oparl_bridge.api.routes import router
+from oparl_bridge.api.ui import router as ui_router
 from oparl_bridge.config import settings
 from oparl_bridge.db.session import init_db
+
+_STATIC = Path(__file__).parent / "static"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -42,15 +47,12 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(ui_router)
 
 
 @app.get("/")
 async def root():
-    return {
-        "name": "oparl-bridge",
-        "oparl_endpoint": f"{settings.api_base_url}/oparl/v1.1",
-        "allris_instance": settings.allris_base_url,
-    }
+    return FileResponse(_STATIC / "index.html")
 
 
 def main():
