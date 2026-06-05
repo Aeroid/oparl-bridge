@@ -36,7 +36,8 @@ PDFs are **not** fetched or stored. Files only carry an `accessUrl` pointing bac
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.11+
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
 - Playwright Chromium
 
 ## Installation
@@ -46,25 +47,29 @@ PDFs are **not** fetched or stored. Files only carry an `accessUrl` pointing bac
 git clone https://github.com/aeroid/oparl-bridge.git
 cd oparl-bridge
 
-# Install with pip (or uv)
-pip install -e ".[dev]"
+# Install (uv creates the virtualenv automatically)
+uv sync
 
 # Install Playwright browser
-playwright install chromium
+uv run playwright install chromium
 ```
 
 ## Configuration
 
-All settings use the `OPARL_` prefix, readable from environment variables or a `.env` file:
+All settings use the `OPARL_` prefix, readable from environment variables or a `.env` file.
+The defaults point to Neu Wulmstorf — override as needed:
 
 ```env
 OPARL_ALLRIS_BASE_URL=https://www.your-municipality.de/allris
-OPARL_API_BASE_URL=https://oparl.your-municipality.de
 OPARL_BODY_NAME=Stadt Musterstadt
 OPARL_BODY_WEBSITE=https://www.your-municipality.de
 OPARL_DATABASE_URL=sqlite:///./oparl_bridge.db
 OPARL_SCRAPER_HEADLESS=true
+OPARL_SCRAPER_DELAY_MS=1500   # pause between requests (be a good citizen)
 ```
+
+`OPARL_API_BASE_URL` is only used as a fallback — the API derives URLs from the incoming
+HTTP request automatically, so it works correctly behind reverse proxies and with any hostname.
 
 To use a different ALLRIS instance, only `OPARL_ALLRIS_BASE_URL` and `OPARL_BODY_NAME` need to change.
 
@@ -111,10 +116,13 @@ Interactive API docs: `http://localhost:8000/docs`
 
 ```bash
 # Run tests
-pytest
+uv run --extra dev python -m pytest
+
+# Lint
+uv run --extra dev ruff check src/
 
 # Run with auto-reload
-uvicorn oparl_bridge.main:app --reload
+uv run oparl-bridge
 ```
 
 ## Architecture notes
