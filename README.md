@@ -1,6 +1,6 @@
 # oparl-bridge
 
-An OParl 1.1-compatible API gateway for German municipal information systems running on **ALLRIS** (cc-eGov/Somacos).
+An OParl 1.1-compatible API gateway for German municipal information systems running on **ALLRIS** (cc-eGov/Somacos). Includes a browser UI for browsing meetings, agendas, and documents.
 
 ## The problem
 
@@ -17,22 +17,23 @@ ALLRIS (Wicket/Ajax)
         ↓
     SQLite cache         ← metadata only, ~50 MB for a small municipality
         ↓
-  FastAPI OParl API      ← standard OParl 1.1 REST API
+  FastAPI OParl API      ← standard OParl 1.1 REST API + browser UI
         ↓
 meine-stadt-transparent  ← (or any OParl-compatible frontend)
 ```
 
-PDFs are **not** fetched or stored. Files only carry an `accessUrl` pointing back to the ALLRIS instance.
+PDFs are **not** fetched or stored. Files carry an `accessUrl` back to ALLRIS; the browser UI proxies PDFs on demand using stored session cookies.
 
 ## Supported ALLRIS objects → OParl mapping
 
 | ALLRIS | OParl |
 |--------|-------|
-| Gremium (gr010/gr020) | `oparl:Organization` |
-| Sitzung (si010/si020) | `oparl:Meeting` |
-| Tagesordnungspunkt (to020) | `oparl:AgendaItem` |
+| Gremium (gr010) | `oparl:Organization` |
+| Sitzung (si018) | `oparl:Meeting` |
+| Sitzungsdetail + Tagesordnung (to010) | `oparl:Meeting` (location, agenda) |
+| Tagesordnungspunkt | `oparl:AgendaItem` |
 | Vorlage/Drucksache (vo020) | `oparl:Paper` |
-| Dokument (doc/) | `oparl:File` (accessUrl only) |
+| Dokument (Wicket resource URL) | `oparl:File` (accessUrl only) |
 
 ## Requirements
 
@@ -43,21 +44,16 @@ PDFs are **not** fetched or stored. Files only carry an `accessUrl` pointing bac
 ## Installation
 
 ```bash
-# Clone the repo
 git clone https://github.com/aeroid/oparl-bridge.git
 cd oparl-bridge
 
-# Install (uv creates the virtualenv automatically)
 uv sync
-
-# Install Playwright browser
 uv run playwright install chromium
 ```
 
 ## Configuration
 
-All settings use the `OPARL_` prefix, readable from environment variables or a `.env` file.
-Set these in a `.env` file (never committed — already in `.gitignore`):
+Create a `.env` file (never committed):
 
 ```env
 OPARL_ALLRIS_BASE_URL=https://www.your-municipality.de/allris
@@ -65,36 +61,45 @@ OPARL_BODY_NAME=Stadt Musterstadt
 OPARL_BODY_WEBSITE=https://www.your-municipality.de
 OPARL_DATABASE_URL=sqlite:///./oparl_bridge.db
 OPARL_SCRAPER_HEADLESS=true
-OPARL_SCRAPER_DELAY_MS=1500   # pause between requests (be a good citizen)
+OPARL_SCRAPER_DELAY_MS=1500   # pause between requests — be a good citizen
 ```
 
-`OPARL_API_BASE_URL` is only used as a fallback — the API derives URLs from the incoming
-HTTP request automatically, so it works correctly behind reverse proxies and with any hostname.
-
-To use a different ALLRIS instance, only `OPARL_ALLRIS_BASE_URL` and `OPARL_BODY_NAME` need to change.
+`OPARL_API_BASE_URL` is only a fallback. The API derives URLs from the incoming HTTP request automatically, so it works correctly behind reverse proxies.
 
 ## Running
 
-### 1. Initial data sync
+### 1. Sync data from ALLRIS
 
 ```bash
-# Sync committees from gr010
-oparl-bridge-sync sync-orgs
+# Full sync: committees → meetings → meeting details (location, agenda) → papers/files
+uv run oparl-bridge-sync sync
 
-# Full sync (committees → meetings per committee)
-oparl-bridge-sync sync
+# Sync committees only (also refreshes session cookies for the PDF proxy)
+uv run oparl-bridge-sync sync-orgs
 ```
 
-### 2. Start the API server
+### 2. Start the server
 
 ```bash
-oparl-bridge
-# or: uvicorn oparl_bridge.main:app --reload
+uv run oparl-bridge
 ```
 
-The OParl entrypoint is at: `http://localhost:8000/oparl/v1.1/`
+| URL | What you get |
+|-----|-------------|
+| `http://localhost:8000/` | Browser UI (Alpine.js SPA) |
+| `http://localhost:8000/oparl/v1.1/` | OParl API entrypoint |
+| `http://localhost:8000/docs` | Interactive API docs |
 
-Interactive API docs: `http://localhost:8000/docs`
+## Browser UI
+
+The SPA at `/` provides a navigable view of the scraped data:
+
+- **Gremien** → click → **Sitzungsliste** (newest first) → click → **Tagesordnung**
+- Each agenda item shows its TOP number, title, Vorlage reference (e.g. `VO/25/04351`), and direct PDF links
+- **Search**: live full-text search across all meetings, agenda items, and Vorlage references — index loads in the background, all filtering is client-side (no server requests per keystroke)
+- **Wide screens (>1500 px)**: PDF opens in a split-view iframe panel; narrower screens open PDFs in a new tab
+
+PDFs are served via `/ui/proxy/file/{id}`, which uses the Wicket session cookies saved after each sync run. If the session expires, run `uv run oparl-bridge-sync sync-orgs` to refresh.
 
 ## OParl endpoints
 
@@ -105,31 +110,38 @@ Interactive API docs: `http://localhost:8000/docs`
 | `GET /oparl/v1.1/body/1` | Body detail |
 | `GET /oparl/v1.1/body/1/organizations` | All committees |
 | `GET /oparl/v1.1/organization/{id}` | Committee detail |
-| `GET /oparl/v1.1/body/1/meetings` | All meetings (filter: `?organization=<id>`) |
-| `GET /oparl/v1.1/meeting/{id}` | Meeting detail |
-| `GET /oparl/v1.1/agendaitem/{id}` | Agenda item detail |
-| `GET /oparl/v1.1/body/1/papers` | All papers/Vorlagen |
-| `GET /oparl/v1.1/paper/{id}` | Paper detail |
-| `GET /oparl/v1.1/file/{id}` | File metadata (accessUrl to ALLRIS) |
+| `GET /oparl/v1.1/body/1/meetings` | All meetings (`?organization=<id>` to filter) |
+| `GET /oparl/v1.1/meeting/{id}` | Meeting with agenda item URLs |
+| `GET /oparl/v1.1/agendaitem/{id}` | Agenda item with paper consultation link |
+| `GET /oparl/v1.1/body/1/papers` | All Vorlagen |
+| `GET /oparl/v1.1/paper/{id}` | Paper with mainFile / auxiliaryFile links |
+| `GET /oparl/v1.1/file/{id}` | File metadata with `accessUrl` to ALLRIS |
+
+## Sync commands
+
+```bash
+uv run oparl-bridge-sync sync           # full sync
+uv run oparl-bridge-sync sync-orgs      # committees only (also refreshes session cookies)
+uv run oparl-bridge-sync sync-papers    # papers/files only (meeting details must exist)
+uv run oparl-bridge-sync reset-details  # force re-scrape of all meeting detail pages
+```
 
 ## Development
 
 ```bash
-# Run tests
 uv run --extra dev python -m pytest
-
-# Lint
 uv run --extra dev ruff check src/
-
-# Run with auto-reload
-uv run oparl-bridge
 ```
 
 ## Architecture notes
 
 - **One deployment per ALLRIS instance.** The Body ID is always `/oparl/v1.1/body/1`.
 - **ALLRIS IDs are preserved** as OParl numeric IDs (GRLFDNR → Organization.id, etc.).
-- **Playwright is required** because ALLRIS uses Apache Wicket with Ajax rendering — static HTTP requests return 403 or empty pages.
+- **Playwright is required** — ALLRIS uses Apache Wicket with Ajax; static HTTP returns 403.
+- **Session warmup**: scraper must visit `gr010` before detail pages are accessible.
+- **Rate limiting**: configurable delay between every `page.goto()` call (`OPARL_SCRAPER_DELAY_MS`).
+- **Incremental sync**: `Meeting.detail_scraped_at` tracks scraped meetings; only new ones are re-scraped.
+- **SQLite migrations**: new columns are added via `ALTER TABLE` in `_migrate()` — no Alembic.
 
 ## License
 
