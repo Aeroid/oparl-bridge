@@ -28,20 +28,23 @@ PDFs are NOT fetched or stored — only `accessUrl` pointing back to ALLRIS.
 The local `.env` (gitignored) points to `https://www.neu-wulmstorf.de/allris/`.
 Do not hardcode this URL anywhere in the source — it belongs in `.env` only.
 
-## ALLRIS URL patterns (consistent across all instances)
-| Path | Description |
-|------|-------------|
-| `/allris/gr010` | Committee list (Gremienübersicht) |
-| `/allris/gr020?GRLFDNR=<id>` | Committee detail |
-| `/allris/si010` | Meeting calendar (Sitzungskalender) |
-| `/allris/si018?GRLFDNR=<id>` | Meetings for one committee |
-| `/allris/si020?SILFDNR=<id>` | Meeting detail + agenda |
-| `/allris/to020?TOLFDNR=<id>` | Agenda item detail |
-| `/allris/vo020?VOLFDNR=<id>` | Paper/Vorlage detail |
-| `/allris/doc/<id>` | PDF documents (static) |
+## ALLRIS URL patterns (verified against Neu Wulmstorf)
+| Path | Description | Scraped? |
+|------|-------------|----------|
+| `/allris/gr010` | Committee list — columns: Name \| Mitglieder \| Letzte Sitzung \| Nächste Sitzung | ✅ |
+| `/allris/gr020?GRLFDNR=<id>` | Committee detail | ❌ |
+| `/allris/si010` | Meeting calendar (all committees) | ✅ |
+| `/allris/si018?GRLFDNR=<id>` | Meetings for one committee — columns: Datum \| Uhrzeit \| Sitzung \| Rang | ✅ |
+| `/allris/to010?SILFDNR=<id>&refresh=false` | Meeting detail + agenda — dt labels: Betreff, Datum, Uhrzeit, Raum, Ort | ✅ |
+| `/allris/to020?TOLFDNR=<id>` | Agenda item detail | ❌ |
+| `/allris/vo020?VOLFDNR=<id>` | Paper/Vorlage detail | ❌ |
+| `/allris/doc/<id>` | PDF documents (static) | ❌ |
+
+**Note:** The meeting detail page is `to010`, not `si020`. Direct links on si018 point to `to010`.
 
 ALLRIS uses Apache Wicket — pages require a browser session (JS/cookies).
-WebFetch/curl will get 403. Always use Playwright for scraping.
+WebFetch/curl will get 403 or redirect. Always use Playwright.
+Session must be warmed up first (e.g. via gr010) before detail pages are accessible.
 
 ## OParl objects (implementation priority)
 1. `oparl:System` ✅
@@ -91,7 +94,9 @@ uv run --extra dev ruff check src/
 - **SQLAlchemy 2.0 style**: Use `Mapped[]` type annotations, not legacy `Column()`
 - **URL derivation**: `OParlMapper` is instantiated per-request via FastAPI dependency injection, using `request.base_url` so URLs in responses reflect the actual hostname/scheme
 - **Rate limiting**: `AllrisScraper._goto()` sleeps `OPARL_SCRAPER_DELAY_MS` before every `page.goto()` call
-- **gr010 table structure**: Columns are Name | Mitglieder | Letzte Sitzung | Nächste Sitzung — no short name or organization type available on that page
+- **Incremental sync**: `Meeting.detail_scraped_at` tracks whether to010 has been scraped. `sync_meeting_details` only scrapes meetings where this is NULL. New meetings get `detail_scraped_at=NULL`; existing meetings keep their value. `sync_meetings` (si018) never touches `location` — only the detail scraper sets it.
+- **SQLite migrations**: `init_db()` calls `_migrate()` which uses `ALTER TABLE` to add new columns to existing DBs. No Alembic.
+- **dt-only parsing**: `_parse_meeting_detail` queries only `dt` elements, not `th`. The agenda table on to010 has a `th` named "Betreff" which would overwrite the correctly parsed meeting name.
 
 ## OParl spec
 https://dev.oparl.org/spezifikation/
