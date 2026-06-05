@@ -57,7 +57,7 @@ uv run playwright install chromium
 ## Configuration
 
 All settings use the `OPARL_` prefix, readable from environment variables or a `.env` file.
-The defaults point to Neu Wulmstorf — override as needed:
+Set these in a `.env` file (never committed — already in `.gitignore`):
 
 ```env
 OPARL_ALLRIS_BASE_URL=https://www.your-municipality.de/allris
