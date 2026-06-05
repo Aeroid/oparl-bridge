@@ -1,10 +1,13 @@
 """Simple CLI for running scraper tasks."""
 
 import asyncio
+import logging
 import sys
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
     if len(sys.argv) < 2:
         print("Usage: oparl-bridge-sync <command>")
         print("Commands:")
