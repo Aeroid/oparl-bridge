@@ -210,19 +210,10 @@
                                 <td>
                                     <div class="files" x-show="item.paper?.files?.length">
                                         <template x-for="file in (item.paper?.files || [])" :key="file.id">
-                                            <!-- Wide: open in iframe; narrow: open in new tab -->
-                                            <template x-if="wide">
-                                                <button class="outline"
-                                                        @click="openPdf(file)"
-                                                        x-text="file.name"
-                                                        :aria-current="activePdfId === file.id ? 'true' : null">
-                                                </button>
-                                            </template>
-                                            <template x-if="!wide">
-                                                <a :href="proxyUrl(file.id)"
-                                                   target="_blank"
-                                                   x-text="file.name"></a>
-                                            </template>
+                                            <a href="#"
+                                               @click.prevent="wide ? openPdf(file) : window.open(proxyUrl(file.id), '_blank')"
+                                               x-text="file.name"
+                                               :style="activePdfId === file.id ? 'font-weight:600' : ''"></a>
                                         </template>
                                     </div>
                                 </td>
