@@ -186,12 +186,9 @@ async def _parse_meetings(page: Page, organization_id: int | None) -> list[Scrap
     """
     Parse meeting rows from si010 or si018.
 
-    Typical row structure:
-      <tr>
-        <td><a href="si020?SILFDNR=123">Gemeinderat</a></td>
-        <td>12.06.2024 19:00 Uhr</td>
-        <td>Rathaus, Sitzungssaal</td>
-      </tr>
+    si018 column structure: Datum | Uhrzeit | Sitzung (link) | Rang
+    Date and time are in separate columns and must be combined.
+    Location is not available on list pages — scraped from detail pages.
     """
     results: list[ScrapedMeeting] = []
 
@@ -211,19 +208,19 @@ async def _parse_meetings(page: Page, organization_id: int | None) -> list[Scrap
         name = (await link.inner_text()).strip()
         cells = await row.query_selector_all("td")
         start_str = None
-        location = None
         if len(cells) >= 2:
-            start_str = (await cells[1].inner_text()).strip() or None
-        if len(cells) >= 3:
-            location = (await cells[2].inner_text()).strip() or None
+            # cells[0] = date ("Do.,\n24.09.2026"), cells[1] = time ("19:30")
+            date_raw = (await cells[0].inner_text()).strip()
+            time_raw = (await cells[1].inner_text()).strip()
+            combined = f"{date_raw} {time_raw}".replace("\n", " ")
+            start_str = _parse_german_datetime(combined) or None
 
         results.append(
             ScrapedMeeting(
                 id=silfdnr,
                 name=name,
                 organization_id=organization_id,
-                start=_parse_german_datetime(start_str),
-                location=location,
+                start=start_str,
             )
         )
     return results
