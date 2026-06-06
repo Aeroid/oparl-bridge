@@ -160,10 +160,26 @@
                                 <a href="#" @click.prevent="showMeetings(org)"
                                    x-text="org.orgName"></a>
                             </td>
-                            <td style="white-space:nowrap; color:var(--pico-muted-color)"
-                                x-text="org.lastMeeting ? formatDateShort(org.lastMeeting) : '—'"></td>
-                            <td style="white-space:nowrap"
-                                x-text="org.nextMeeting ? formatDateList(org.nextMeeting) : '—'"></td>
+                            <td style="white-space:nowrap; color:var(--pico-muted-color)">
+                                <template x-if="org.lastMeetingId">
+                                    <a href="#" style="color:inherit"
+                                       @click.prevent="showMeetings(org); showMeeting(allMeetings.find(m => m.id === org.lastMeetingId))"
+                                       x-text="formatDateShort(org.lastMeeting)"></a>
+                                </template>
+                                <template x-if="!org.lastMeetingId">
+                                    <span>—</span>
+                                </template>
+                            </td>
+                            <td style="white-space:nowrap">
+                                <template x-if="org.nextMeetingId">
+                                    <a href="#"
+                                       @click.prevent="showMeetings(org); showMeeting(allMeetings.find(m => m.id === org.nextMeetingId))"
+                                       x-text="formatDateList(org.nextMeeting)"></a>
+                                </template>
+                                <template x-if="!org.nextMeetingId">
+                                    <span>—</span>
+                                </template>
+                            </td>
                         </tr>
                     </template>
                 </tbody>
@@ -350,17 +366,22 @@ function app() {
                         if (!seen.has(m.orgId)) {
                             seen.set(m.orgId, {
                                 orgId: m.orgId, orgName: m.orgName,
-                                lastMeeting: null, nextMeeting: null,
+                                lastMeeting: null, lastMeetingId: null,
+                                nextMeeting: null, nextMeetingId: null,
                             });
                         }
                         const org = seen.get(m.orgId);
                         if (m.start) {
                             if (m.start < now) {
-                                if (!org.lastMeeting || m.start > org.lastMeeting)
+                                if (!org.lastMeeting || m.start > org.lastMeeting) {
                                     org.lastMeeting = m.start;
+                                    org.lastMeetingId = m.id;
+                                }
                             } else {
-                                if (!org.nextMeeting || m.start < org.nextMeeting)
+                                if (!org.nextMeeting || m.start < org.nextMeeting) {
                                     org.nextMeeting = m.start;
+                                    org.nextMeetingId = m.id;
+                                }
                             }
                         }
                     }
