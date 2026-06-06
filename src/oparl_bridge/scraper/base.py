@@ -284,24 +284,31 @@ async def _parse_organizations(page: Page) -> list[ScrapedOrganization]:
 async def _set_full_date_range(page: Page) -> None:
     """Expand the ALLRIS si018 Zeitraum filter to cover all years.
 
-    ALLRIS defaults to a rolling ~15-month window.  Clicking the expand
-    button, filling the date inputs, and submitting loads all meetings.
+    ALLRIS defaults to a rolling ~15-month window.  We use stable
+    aria-label / tooltip-text selectors instead of Wicket-generated IDs,
+    which change between browser sessions.
     """
-    expand = await page.query_selector("#showHideLink_id2")
+    expand = await page.query_selector(
+        'a[data-simpletooltip-text="Zeitraum einblenden"]'
+    )
     if expand is None:
         return
     await expand.click()
     try:
-        await page.wait_for_selector("#id12", state="visible", timeout=10000)
+        await page.wait_for_selector(
+            'input[aria-label="Beginn Datum auswählen"]',
+            state="visible",
+            timeout=10000,
+        )
     except Exception:
         return
-    begin = await page.query_selector("#beginDateField")
-    end = await page.query_selector("#id17")
+    begin = await page.query_selector('input[aria-label="Beginn Datum auswählen"]')
+    end = await page.query_selector('input[aria-label="Ende Datum auswählen"]')
     if begin:
         await begin.fill("2000-01-01")
     if end:
         await end.fill("2099-12-31")
-    search_btn = await page.query_selector("#searchButton")
+    search_btn = await page.query_selector('button[name="searchPanel:search"]')
     if search_btn:
         await search_btn.click()
         await page.wait_for_load_state("networkidle", timeout=30000)

@@ -131,7 +131,7 @@
                 <tbody>
                     <template x-for="r in searchResults" :key="r.key">
                         <tr style="cursor:pointer" @click="openSearchResult(r)">
-                            <td style="white-space:nowrap" x-text="formatDate(r.start)"></td>
+                            <td style="white-space:nowrap" x-text="formatDateList(r.start)"></td>
                             <td x-text="r.orgName"></td>
                             <td x-text="r.number || '—'"></td>
                             <td>
@@ -152,7 +152,7 @@
         <section>
             <h2>Gremien</h2>
             <table>
-                <thead><tr><th>Gremium</th></tr></thead>
+                <thead><tr><th>Gremium</th><th>Letzte Sitzung</th><th>Nächste Sitzung</th></tr></thead>
                 <tbody>
                     <template x-for="org in orgs" :key="org.orgId">
                         <tr>
@@ -160,6 +160,10 @@
                                 <a href="#" @click.prevent="showMeetings(org)"
                                    x-text="org.orgName"></a>
                             </td>
+                            <td style="white-space:nowrap; color:var(--pico-muted-color)"
+                                x-text="org.lastMeeting ? formatDateShort(org.lastMeeting) : '—'"></td>
+                            <td style="white-space:nowrap"
+                                x-text="org.nextMeeting ? formatDateList(org.nextMeeting) : '—'"></td>
                         </tr>
                     </template>
                 </tbody>
@@ -177,7 +181,7 @@
                 <tbody>
                     <template x-for="mtg in filteredMeetings" :key="mtg.id">
                         <tr>
-                            <td style="white-space:nowrap" x-text="formatDate(mtg.start)"></td>
+                            <td style="white-space:nowrap" x-text="formatDateList(mtg.start)"></td>
                             <td>
                                 <a href="#" @click.prevent="showMeeting(mtg)"
                                    x-text="mtg.name"></a>
@@ -339,10 +343,25 @@ function app() {
                 .then(r => r.json())
                 .then(data => {
                     this.allMeetings = data.meetings;
+                    const now = new Date().toISOString();
                     const seen = new Map();
                     for (const m of data.meetings) {
-                        if (m.orgId && !seen.has(m.orgId)) {
-                            seen.set(m.orgId, { orgId: m.orgId, orgName: m.orgName });
+                        if (!m.orgId) continue;
+                        if (!seen.has(m.orgId)) {
+                            seen.set(m.orgId, {
+                                orgId: m.orgId, orgName: m.orgName,
+                                lastMeeting: null, nextMeeting: null,
+                            });
+                        }
+                        const org = seen.get(m.orgId);
+                        if (m.start) {
+                            if (m.start < now) {
+                                if (!org.lastMeeting || m.start > org.lastMeeting)
+                                    org.lastMeeting = m.start;
+                            } else {
+                                if (!org.nextMeeting || m.start < org.nextMeeting)
+                                    org.nextMeeting = m.start;
+                            }
                         }
                     }
                     this.orgs = [...seen.values()].sort((a, b) =>
@@ -502,6 +521,17 @@ function app() {
             return new Date(iso).toLocaleDateString('de-DE', {
                 day: '2-digit', month: '2-digit', year: 'numeric',
             });
+        },
+
+        formatDateList(iso) {
+            if (!iso) return '—';
+            const d = new Date(iso);
+            const opts = {weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit'};
+            if (d >= new Date()) {
+                opts.hour = '2-digit';
+                opts.minute = '2-digit';
+            }
+            return d.toLocaleString('de-DE', opts);
         },
     };
 }
