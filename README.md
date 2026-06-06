@@ -31,7 +31,7 @@ PDFs are **not** fetched or stored. Files carry an `accessUrl` back to ALLRIS; t
 | Gremium (gr010) | `oparl:Organization` |
 | Sitzung (si018) | `oparl:Meeting` |
 | Sitzungsdetail + Tagesordnung (to010) | `oparl:Meeting` (location, agenda) |
-| Tagesordnungspunkt | `oparl:AgendaItem` |
+| Tagesordnungspunkt + aufgeklappter Beschluss | `oparl:AgendaItem` (result, resolutionText, auxiliaryFile) |
 | Vorlage/Drucksache (vo020) | `oparl:Paper` |
 | Dokument (Wicket resource URL) | `oparl:File` (accessUrl only) |
 
@@ -97,9 +97,10 @@ The SPA at `/` provides a navigable view of the scraped data:
 - **Gremien** → click → **Sitzungsliste** (newest first) → click → **Tagesordnung**
 - Each agenda item shows its TOP number, title, Vorlage reference (e.g. `VO/25/04351`), and direct PDF links
 - **Search**: live full-text search across all meetings, agenda items, and Vorlage references — index loads in the background, all filtering is client-side (no server requests per keystroke)
+- **Beschlüsse**: each agenda item shows a result badge (beschlossen / abgelehnt / vertagt / zur Kenntnis), the raw Abstimmungsergebnis, and Beschlusstext scraped from the ALLRIS expand panel
 - **Wide screens (>1500 px)**: PDF opens in a split-view iframe panel; narrower screens open PDFs in a new tab
 
-PDFs are served via `/ui/proxy/file/{id}`. Each request launches a headless Playwright browser, navigates to the paper's vo020 page, and intercepts the PDF download. This is ~3–5 s per click but requires no pre-stored cookies.
+PDFs are served via `/ui/proxy/file/{id}`. Each request launches a headless Playwright browser, navigates to the relevant ALLRIS page (vo020 for Vorlage files, to010 for agenda-item attachments), and intercepts the PDF download via route interception. This is ~3–5 s per click but requires no pre-stored cookies.
 
 ## OParl endpoints
 
