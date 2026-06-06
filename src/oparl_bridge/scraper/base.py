@@ -506,7 +506,7 @@ async def _parse_paper(page: Page, paper_id: int) -> ScrapedPaper | None:
     paper_type = None
     files: list[ScrapedFile] = []
 
-    # vo020 dt labels: Betreff, Status, Vorlageart, Federführend, ...
+    # vo020 dt labels: Betreff, Status, Vorlageart, Vorlagenzeichen, Federführend, ...
     dts = await page.query_selector_all("dt")
     for dt in dts:
         label = (await dt.inner_text()).strip().lower().rstrip(":")
@@ -517,6 +517,8 @@ async def _parse_paper(page: Page, paper_id: int) -> ScrapedPaper | None:
                 name = value
             elif label == "vorlageart":
                 paper_type = value or None
+            elif label in ("vorlagenzeichen", "vorlagen-nr.", "aktenzeichen", "drucksachennummer"):
+                reference = value or None
 
     if not name:
         name = (await page.title()).strip()

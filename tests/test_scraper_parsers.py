@@ -1,8 +1,6 @@
 """Unit tests for scraper helper functions — no browser required."""
 
-import pytest
-
-from oparl_bridge.scraper.base import _extract_int_param, _parse_german_datetime
+from oparl_bridge.scraper.base import _derive_result, _extract_int_param, _parse_german_datetime
 
 
 def test_extract_int_param_silfdnr():
@@ -38,3 +36,45 @@ def test_parse_german_datetime_none():
 
 def test_parse_german_datetime_garbage():
     assert _parse_german_datetime("keine Angabe") is None
+
+
+def test_parse_german_datetime_weekday_prefix():
+    # si018 column 0 includes weekday abbreviation, e.g. "Do.,\n24.09.2026"
+    result = _parse_german_datetime("Do., 24.09.2026 19:30")
+    assert result == "2026-09-24T19:30:00"
+
+
+# ---------------------------------------------------------------------------
+# _derive_result
+# ---------------------------------------------------------------------------
+
+def test_derive_result_accepted():
+    assert _derive_result("einstimmig beschlossen", None) == "ACCEPTED"
+    assert _derive_result(None, "angenommen") == "ACCEPTED"
+    assert _derive_result("beschlossen", None) == "ACCEPTED"
+
+
+def test_derive_result_rejected():
+    assert _derive_result("abgelehnt", None) == "REJECTED"
+    assert _derive_result(None, "abgewiesen") == "REJECTED"
+
+
+def test_derive_result_deferred():
+    assert _derive_result("vertagt", None) == "DEFERRED"
+    assert _derive_result(None, "zurückgestellt") == "DEFERRED"
+    assert _derive_result("verschoben", None) == "DEFERRED"
+
+
+def test_derive_result_nodecision():
+    assert _derive_result("zur kenntnis genommen", None) == "NODECISION"
+    assert _derive_result(None, "kenntnisnahme") == "NODECISION"
+    assert _derive_result("ohne abstimmung", None) == "NODECISION"
+
+
+def test_derive_result_none_when_empty():
+    assert _derive_result(None, None) is None
+    assert _derive_result("", "") is None
+
+
+def test_derive_result_none_when_unknown():
+    assert _derive_result("irgendein Text", "ohne klaren Beschluss") is None
