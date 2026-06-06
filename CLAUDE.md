@@ -37,7 +37,7 @@ Do not hardcode this URL anywhere in the source — it belongs in `.env` only.
 | `/allris/gr020?GRLFDNR=<id>` | Committee detail | ❌ |
 | `/allris/si010` | Meeting calendar (all committees) | ✅ |
 | `/allris/si018?GRLFDNR=<id>` | Meetings for one committee — columns: Datum \| Uhrzeit \| Sitzung \| Rang | ✅ |
-| `/allris/to010?SILFDNR=<id>&refresh=false` | Meeting detail + agenda — dt labels: Betreff, Datum, Uhrzeit, Raum, Ort | ✅ |
+| `/allris/to010?SILFDNR=<id>&refresh=false` | Meeting detail + agenda — dt labels: Betreff, Datum, Uhrzeit, Raum, Ort; each TOP has a +/- expand button (Wicket Ajax) that reveals Beschluss, Abstimmungsergebnis, Anlagen/Wortbeiträge | ✅ |
 | `/allris/to020?TOLFDNR=<id>` | Agenda item detail | ❌ |
 | `/allris/vo020?VOLFDNR=<id>` | Paper/Vorlage detail — dt labels: Betreff, Vorlageart; PDFs via `a[href*='.pdf']` | ✅ |
 | `/allris/doc/<id>` | PDF documents (static) | ❌ |
@@ -96,7 +96,7 @@ uv run --extra dev ruff check src/
 | `GET /` | Serves `static/index.html` (Alpine.js SPA) |
 | `GET /ui/all` | All meetings + agenda items in one response — used for client-side search index |
 | `GET /ui/meeting/{id}` | Meeting with inlined agenda items, papers, and file URLs |
-| `GET /ui/proxy/file/{id}` | Streams PDF from ALLRIS using stored Wicket session cookies (`oparl_cookies.json`) |
+| `GET /ui/proxy/file/{id}` | Fetches PDF from ALLRIS via Playwright route interception (navigates to vo020 or to010, intercepts the download link click) |
 
 ## Key design decisions
 - **One Body per instance**: oparl-bridge is deployed per ALLRIS instance; Body ID is always `/oparl/v1.1/body/1`
@@ -111,7 +111,8 @@ uv run --extra dev ruff check src/
 - **SQLite migrations**: `init_db()` calls `_migrate()` which uses `ALTER TABLE` to add new columns to existing DBs. No Alembic.
 - **dt-only parsing**: `_parse_meeting_detail` and `_parse_paper` query only `dt` elements, not `th`. The agenda table on to010 has a `th` named "Betreff" which would overwrite the correctly parsed meeting name.
 - **AgendaItem paper link**: `AgendaItem.paper_id` (VOLFDNR FK) and `paper_reference` (link text) are populated from to010 cells[4] during `sync_meeting_details`. The `consultation` field in the OParl API response links to the paper URL.
-- **PDF proxy**: `AllrisScraper._save_cookies()` writes `oparl_cookies.json` (JSESSIONID) after every session teardown. `/ui/proxy/file/{id}` reads these cookies and streams the PDF via httpx. Session expires when ALLRIS invalidates it — re-run `sync-orgs` to refresh.
+- **PDF proxy**: Wicket resource URLs (`/allris/wicket/resource/.../doc<id>.pdf`) are session-scoped. `httpx` and `page.request.get()` both return 404. The only working approach is Playwright route interception: navigate to the source page (vo020 for paper files, to010 for agenda-item attachments), register `page.route("**/<filename>", handler)`, click the PDF link, capture bytes in the handler. For to010, all `+` expand buttons are clicked first so Wicket registers all resource URLs. Each proxy request launches a fresh headless browser (~3–5 s).
+- **AgendaItem attachments**: Clicking the Wicket `+` expand button per TOP during `scrape_meeting_detail` reveals Beschlusstext, Abstimmungsergebnis, and PDF attachments (Anlagen, Wortbeiträge). These are stored as `File` records with `agenda_item_id` FK (not `paper_id`). `_derive_result` maps raw German text to OParl result enums (ACCEPTED/REJECTED/DEFERRED/NODECISION).
 - **SPA search**: `/ui/all` is fetched once in the background after page load. All filtering happens client-side (Alpine.js). No server requests per keystroke. Results cover meeting names, TOP names, and Vorlage references.
 - **Responsive split layout**: SPA detects `window.innerWidth > 1500`. Above that threshold, meeting detail shows a sticky PDF iframe panel on the right. Below it, PDF links open in a new tab. PDF is loaded via the proxy endpoint.
 
