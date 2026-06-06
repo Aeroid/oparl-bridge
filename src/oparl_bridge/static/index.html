@@ -7,18 +7,22 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
     <style>
+        html { font-size: 75%; }
         [x-cloak] { display: none !important; }
 
-        .breadcrumb { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
-        .breadcrumb span { color: var(--pico-muted-color); }
+        .container-fluid { padding-inline: 0.75rem; }
+
+        .breadcrumb {
+            display: flex; gap: 0.4rem; align-items: center;
+            flex-wrap: wrap; justify-content: flex-start;
+        }
+        .breadcrumb .sep { color: var(--pico-muted-color); }
         .nonpublic td { color: var(--pico-muted-color); }
         .files { display: flex; gap: 0.5rem; flex-wrap: wrap; }
         .files a, .files button { font-size: 0.85em; white-space: nowrap; }
 
-        /* Search highlight */
         mark { background: #fff3cd; padding: 0 2px; border-radius: 2px; }
 
-        /* Result badge */
         .result-badge {
             display: inline-block; font-size: 0.7em; font-weight: 600;
             padding: 1px 6px; border-radius: 3px; white-space: nowrap;
@@ -29,19 +33,26 @@
         .result-DEFERRED  { background: #fff3cd; color: #856404; }
         .result-NODECISION{ background: #e2e3e5; color: #383d41; }
 
-        /* Collapsible detail per TOP */
         .top-detail { font-size: 0.85em; color: var(--pico-muted-color); margin-top: 0.3rem; }
         .top-detail p { margin: 0.15rem 0; }
 
-        /* Split layout for wide screens */
+        /* Split layout — flex so drag handle can resize the PDF panel */
         .split-layout {
-            display: grid;
-            grid-template-columns: 3fr 2fr;
-            gap: 1rem;
+            display: flex;
             height: calc(100vh - 12rem);
+            overflow: hidden;
         }
-        .split-content { overflow-y: auto; }
-        .split-pdf { position: sticky; top: 0; height: calc(100vh - 12rem); }
+        .split-content { flex: 1 1 auto; overflow-y: auto; min-width: 200px; }
+        .split-handle {
+            flex: 0 0 5px;
+            cursor: col-resize;
+            background: var(--pico-muted-border-color);
+            margin: 0 2px;
+            border-radius: 2px;
+            transition: background 0.15s;
+        }
+        .split-handle:hover { background: var(--pico-primary); }
+        .split-pdf { flex: 0 0 auto; min-width: 180px; overflow: hidden; }
         .split-pdf iframe {
             width: 100%;
             height: 100%;
@@ -50,24 +61,18 @@
             background: #f5f5f5;
         }
         .split-pdf .pdf-placeholder {
-            width: 100%;
-            height: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            width: 100%; height: 100%;
+            display: flex; align-items: center; justify-content: center;
             border: 1px dashed var(--pico-muted-border-color);
             border-radius: var(--pico-border-radius);
             color: var(--pico-muted-color);
-            font-size: 0.9em;
-            text-align: center;
-            padding: 2rem;
+            font-size: 0.9em; text-align: center; padding: 2rem;
         }
 
         footer { margin-top: 3rem; padding-top: 1rem;
                  border-top: 1px solid var(--pico-muted-border-color); }
         td { vertical-align: top; }
         input[type=search] { margin-bottom: 0; }
-
         .search-result-meta { font-size: 0.8em; color: var(--pico-muted-color); }
     </style>
 </head>
@@ -95,7 +100,7 @@
     <nav class="breadcrumb" aria-label="Breadcrumb" style="margin-top:0.5rem;">
         <a href="#" @click.prevent="goOrgs()">Gremien</a>
         <template x-if="selectedOrg">
-            <span>›</span>
+            <span class="sep">›</span>
         </template>
         <template x-if="selectedOrg && !meeting">
             <span x-text="selectedOrg.orgName"></span>
@@ -104,7 +109,7 @@
             <a href="#" @click.prevent="goMeetings()" x-text="selectedOrg.orgName"></a>
         </template>
         <template x-if="meeting">
-            <span>›</span>
+            <span class="sep">›</span>
         </template>
         <template x-if="meeting">
             <span x-text="meeting.name + (meeting.start ? ' (' + formatDateShort(meeting.start) + ')' : '')"></span>
@@ -220,7 +225,6 @@
                                 <td>
                                     <span x-text="item.name"></span>
                                     <small x-show="!item.public"> (nichtöffentlich)</small>
-                                    <!-- Beschluss + Abstimmung -->
                                     <template x-if="item.result || item.resolutionText || item.voteText">
                                         <div class="top-detail">
                                             <template x-if="item.result">
@@ -239,7 +243,6 @@
                                 <td>
                                     <div x-show="item.paper?.reference" x-text="item.paper?.reference"
                                          style="font-size:0.85em; margin-bottom:0.25rem;"></div>
-                                    <!-- Paper files -->
                                     <div class="files" x-show="item.paper?.files?.length">
                                         <template x-for="file in (item.paper?.files || [])" :key="file.id">
                                             <a :href="proxyUrl(file.id)"
@@ -249,7 +252,6 @@
                                                :style="activePdfId === file.id ? 'font-weight:600' : ''"></a>
                                         </template>
                                     </div>
-                                    <!-- Agenda item attachments (Anlagen, Wortbeiträge) -->
                                     <div class="files" x-show="item.files?.length">
                                         <template x-for="file in (item.files || [])" :key="file.id">
                                             <a :href="proxyUrl(file.id)"
@@ -267,8 +269,14 @@
                 </table>
             </section>
 
+            <!-- Drag handle (wide only) -->
+            <div x-show="wide" class="split-handle"
+                 @mousedown.prevent="startResize($event)"
+                 title="Breite anpassen"></div>
+
             <!-- PDF panel (wide only) -->
-            <aside x-show="wide" class="split-pdf">
+            <aside x-show="wide" class="split-pdf"
+                   :style="wide ? `width:${pdfWidth}px` : ''">
                 <template x-if="activePdfUrl">
                     <iframe :src="activePdfUrl" title="Dokument"></iframe>
                 </template>
@@ -297,21 +305,19 @@ function app() {
         view: 'orgs',
         loading: false,
 
-        // Data
-        orgs: [],            // [{orgId, orgName}] deduplicated from allMeetings
-        allMeetings: [],     // full dataset from /ui/all
-        meetings: [],        // meetings for selected org
-        meeting: null,       // current detail view (from /ui/meeting/{id})
+        orgs: [],
+        allMeetings: [],
+        meetings: [],
+        meeting: null,
         selectedOrg: null,
 
-        // Search
         query: '',
         searchResults: [],
         allLoaded: false,
         loadingAll: false,
 
-        // PDF split view
         wide: window.innerWidth > 1024,
+        pdfWidth: Math.round(Math.max(300, window.innerWidth * 0.55)),
         activePdfUrl: null,
         activePdfId: null,
 
@@ -328,13 +334,11 @@ function app() {
                 this.loading = false;
             }
 
-            // Load full index in background for search
             this.loadingAll = true;
             fetch('/ui/all')
                 .then(r => r.json())
                 .then(data => {
                     this.allMeetings = data.meetings;
-                    // Build org list from meetings
                     const seen = new Map();
                     for (const m of data.meetings) {
                         if (m.orgId && !seen.has(m.orgId)) {
@@ -346,6 +350,25 @@ function app() {
                     this.allLoaded = true;
                     this.loadingAll = false;
                 });
+        },
+
+        startResize(e) {
+            const startX = e.clientX;
+            const startW = this.pdfWidth;
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            const onMove = (ev) => {
+                const delta = startX - ev.clientX;
+                this.pdfWidth = Math.max(180, Math.min(window.innerWidth - 250, startW + delta));
+            };
+            const onUp = () => {
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
         },
 
         showMeetings(org) {
@@ -391,7 +414,6 @@ function app() {
 
             const results = [];
             for (const mtg of this.allMeetings) {
-                // Match on meeting name
                 if (mtg.name.toLowerCase().includes(q)) {
                     results.push({
                         key: `mtg-${mtg.id}`,
@@ -404,7 +426,6 @@ function app() {
                         paperRef: null,
                     });
                 }
-                // Match on agenda items
                 for (const item of mtg.items) {
                     if (
                         item.name.toLowerCase().includes(q) ||
@@ -424,7 +445,6 @@ function app() {
                     }
                 }
             }
-            // Sort: newest first, meetings before items
             results.sort((a, b) => (b.start || '').localeCompare(a.start || ''));
             this.searchResults = results.slice(0, 100);
         },
@@ -432,7 +452,6 @@ function app() {
         async openSearchResult(r) {
             this.query = '';
             this.searchResults = [];
-            // Find the org for this meeting
             const mtg = this.allMeetings.find(m => m.id === r.mtgId);
             if (mtg) {
                 this.selectedOrg = { orgId: mtg.orgId, orgName: mtg.orgName };
