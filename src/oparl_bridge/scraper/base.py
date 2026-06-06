@@ -1,6 +1,7 @@
 """Playwright-based scraper for ALLRIS Wicket applications."""
 
 import asyncio
+import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -324,7 +325,10 @@ async def _parse_meetings(page: Page, organization_id: int | None) -> list[Scrap
     """
     results: list[ScrapedMeeting] = []
 
-    await page.wait_for_selector("table", timeout=15000)
+    try:
+        await page.wait_for_selector("a[href*='SILFDNR']", timeout=15000)
+    except Exception:
+        return results  # no meetings on this page
 
     rows = await page.query_selector_all("table tr")
     for row in rows:
@@ -447,9 +451,13 @@ async def _parse_agenda_items(page: Page) -> list[ScrapedAgendaItem]:
         item_name = (await link.inner_text()).strip()
         cells = await row.query_selector_all("td")
 
-        number_text = (await cells[1].inner_text()).strip() if len(cells) > 1 else ""
+        raw_number = (await cells[1].inner_text()).strip() if len(cells) > 1 else ""
+        # Wicket expand may inject "Beschlüsse für …" text directly into the
+        # number cell — extract only the leading TOP token (e.g. "Ö 4.1").
+        m = re.match(r'^([A-ZÄÖÜa-züäö]*\s*\d+(?:\.\d+)?)', raw_number)
+        number_text = m.group(1).strip() if m else raw_number.split('\n')[0].strip()
         number = number_text or None
-        public = not number_text.upper().startswith("N ")
+        public = not raw_number.upper().startswith("N ")
 
         paper_id = None
         paper_reference = None
