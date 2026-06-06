@@ -153,15 +153,21 @@ class AllrisScraper:
                     captured.set_result((resp.status, body))
                 await route.fulfill(response=resp)
 
-            await page.route(f"**/{filename}", handle_route)
+            # PDF links use target="_blank" — route on the context so the
+            # popup page's request is also intercepted.
+            await self._context.route(f"**/{filename}", handle_route)
 
             link = await page.query_selector(f'a[href*="{filename}"]')
             if link is None:
+                await self._context.unroute(f"**/{filename}", handle_route)
                 return None
             await link.click()
 
-            status, body = await asyncio.wait_for(captured, timeout=15)
-            return body if status == 200 else None
+            try:
+                status, body = await asyncio.wait_for(captured, timeout=15)
+                return body if status == 200 else None
+            finally:
+                await self._context.unroute(f"**/{filename}", handle_route)
         finally:
             await page.close()
 
