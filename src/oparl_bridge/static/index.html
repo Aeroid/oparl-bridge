@@ -385,8 +385,12 @@ function app() {
                             }
                         }
                     }
-                    this.orgs = [...seen.values()].sort((a, b) =>
-                        a.orgName.localeCompare(b.orgName, 'de'));
+                    const isAusschuss = n => /ausschuss/i.test(n);
+                    this.orgs = [...seen.values()].sort((a, b) => {
+                        const ga = isAusschuss(a.orgName) ? 1 : 0;
+                        const gb = isAusschuss(b.orgName) ? 1 : 0;
+                        return ga - gb || a.orgName.localeCompare(b.orgName, 'de');
+                    });
                     this.allLoaded = true;
                     this.loadingAll = false;
                 });
