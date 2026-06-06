@@ -7,3 +7,4 @@ build/
 *.db
 .venv/
 venv/
+oparl_cookies.json
