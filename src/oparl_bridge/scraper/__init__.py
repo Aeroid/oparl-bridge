@@ -3,6 +3,7 @@ from oparl_bridge.scraper.base import (
     ScrapedAgendaItem,
     ScrapedFile,
     ScrapedMeeting,
+    ScrapedMembership,
     ScrapedOrganization,
     ScrapedPaper,
 )
@@ -11,6 +12,7 @@ __all__ = [
     "AllrisScraper",
     "ScrapedOrganization",
     "ScrapedMeeting",
+    "ScrapedMembership",
     "ScrapedAgendaItem",
     "ScrapedPaper",
     "ScrapedFile",

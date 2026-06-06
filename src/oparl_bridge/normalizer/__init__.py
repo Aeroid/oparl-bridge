@@ -5,8 +5,10 @@ from oparl_bridge.normalizer.oparl_schema import (
     OParlFile,
     OParlList,
     OParlMeeting,
+    OParlMembership,
     OParlOrganization,
     OParlPaper,
+    OParlPerson,
     OParlSystem,
 )
 
@@ -20,4 +22,6 @@ __all__ = [
     "OParlPaper",
     "OParlFile",
     "OParlList",
+    "OParlPerson",
+    "OParlMembership",
 ]

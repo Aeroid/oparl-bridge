@@ -2,17 +2,25 @@
 
 import logging
 import re
+from urllib.parse import urljoin
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
+from oparl_bridge.config import settings
 from oparl_bridge.db.models import File, Meeting, Organization, Person
 from oparl_bridge.db.session import get_db
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ui")
+
+_SCRAPER_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 oparl-bridge/0.1"
+)
 
 
 def _top_sort_key(number: str | None) -> tuple[int, int, int]:
@@ -281,50 +289,89 @@ async def ui_municipality():
 
 @router.get("/proxy/file/{file_id}")
 async def proxy_file(file_id: int, db: Session = Depends(get_db)):
-    """Fetch a PDF from ALLRIS using Playwright route interception.
+    """Fetch a PDF from ALLRIS via httpx.
 
-    Wicket resource URLs are session-scoped. We navigate to the vo020 page for
-    the paper, register a route interceptor for the PDF URL, click the link,
-    and capture the bytes — the only approach that returns a 200 response.
+    Strategy: visit the source page first (which sets a JSESSIONID cookie and
+    registers the Wicket resource), then GET the PDF URL with the Referer header
+    set to the source page. httpx handles the session cookie automatically.
     """
     f = db.get(File, file_id)
     if f is None:
         raise HTTPException(status_code=404, detail="File not found")
 
-    from oparl_bridge.db.models import AgendaItem
-    from oparl_bridge.scraper import AllrisScraper
+    allris_base = settings.allris_base_url.rstrip("/")
+
+    # Determine source page URL and actual PDF URL
+    sentinel_index: int | None = None
 
     if f.access_url.startswith("allris://to020/"):
-        # Sentinel URL for to020 Anlagen: allris://to020/{tolfdnr}/{index}
-        parts = f.access_url.replace("allris://to020/", "").split("/")
-        source_id = int(parts[0])
-        source_page = "to020-anlage"
+        # Sentinel: allris://to020/{tolfdnr}/{index}
+        parts = f.access_url.removeprefix("allris://to020/").split("/")
+        tolfdnr = parts[0]
+        sentinel_index = int(parts[1]) if len(parts) > 1 else 0
+        source_url = f"{allris_base}/to020?TOLFDNR={tolfdnr}"
+        pdf_url = None  # resolved from page HTML below
     elif f.paper_id is not None:
-        source_id = f.paper_id
-        source_page = "paper"
+        source_url = f"{allris_base}/vo020?VOLFDNR={f.paper_id}"
+        pdf_url = f.access_url
     elif f.agenda_item_id is not None:
+        from oparl_bridge.db.models import AgendaItem
         ai = db.get(AgendaItem, f.agenda_item_id)
         if ai is None or ai.meeting_id is None:
             raise HTTPException(status_code=422, detail="File has no resolvable source page")
-        source_id = ai.meeting_id
-        source_page = "meeting"
+        source_url = f"{allris_base}/to010?SILFDNR={ai.meeting_id}&refresh=false"
+        pdf_url = f.access_url
     elif f.meeting_id is not None:
-        source_id = f.meeting_id
-        source_page = "meeting"
+        source_url = f"{allris_base}/to010?SILFDNR={f.meeting_id}&refresh=false"
+        pdf_url = f.access_url
     else:
         raise HTTPException(status_code=422, detail="File has no associated paper or agenda item")
 
     try:
-        async with AllrisScraper().session() as scraper:
-            content = await scraper.fetch_file_content(source_id, f.access_url, source_page)
+        async with httpx.AsyncClient(
+            headers={"User-Agent": _SCRAPER_UA},
+            follow_redirects=True,
+            timeout=30,
+        ) as client:
+            # Visit source page: establishes Wicket session and JSESSIONID cookie.
+            resp_source = await client.get(source_url)
+            if resp_source.status_code != 200:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"ALLRIS source page returned {resp_source.status_code}",
+                )
+            referer = str(resp_source.url)
+
+            if pdf_url is None:
+                # Sentinel case: extract PDF links from to020 page.
+                # Scraper selects a.attlink.pdf where href contains "anlagenHeader".
+                seen: set[str] = set()
+                unique_hrefs: list[str] = []
+                for m in re.finditer(r'href="([^"]*anlagenHeader[^"]*)"', resp_source.text):
+                    h = m.group(1)
+                    if h not in seen:
+                        seen.add(h)
+                        unique_hrefs.append(h)
+                if sentinel_index >= len(unique_hrefs):
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"PDF index {sentinel_index} out of range ({len(unique_hrefs)} found on page)",
+                    )
+                href = unique_hrefs[sentinel_index]
+                pdf_url = urljoin(referer, href)
+
+            resp_pdf = await client.get(pdf_url, headers={"Referer": referer})
+            if resp_pdf.status_code != 200:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"PDF fetch returned {resp_pdf.status_code} for {pdf_url}",
+                )
+
+            content_type = resp_pdf.headers.get("content-type", "application/pdf")
+            return Response(resp_pdf.content, media_type=content_type)
+
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.warning("PDF fetch failed id=%d url=%s err=%s", file_id, f.access_url, exc)
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not fetch PDF  {f.access_url}  {exc}",
-        )
-
-    if content is None:
-        raise HTTPException(status_code=502, detail="ALLRIS returned no content for this file")
-
-    return Response(content, media_type="application/pdf")
+        raise HTTPException(status_code=502, detail=f"Could not fetch PDF: {exc}")
