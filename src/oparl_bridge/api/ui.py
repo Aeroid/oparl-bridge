@@ -129,7 +129,7 @@ async def proxy_file(file_id: int, db: Session = Depends(get_db)):
         logger.warning("PDF fetch failed id=%d url=%s err=%s", file_id, f.access_url, exc)
         raise HTTPException(
             status_code=502,
-            detail=f"Could not fetch PDF ({f.access_url}): {exc}",
+            detail=f"Could not fetch PDF  {f.access_url}  {exc}",
         )
 
     if content is None:
