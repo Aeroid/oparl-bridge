@@ -126,8 +126,11 @@ async def proxy_file(file_id: int, db: Session = Depends(get_db)):
         async with AllrisScraper().session() as scraper:
             content = await scraper.fetch_file_content(source_id, f.access_url, source_page)
     except Exception as exc:
-        logger.warning("Playwright PDF fetch failed for file %d: %s", file_id, exc)
-        raise HTTPException(status_code=502, detail=f"Could not fetch PDF: {exc}")
+        logger.warning("PDF fetch failed id=%d url=%s err=%s", file_id, f.access_url, exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not fetch PDF ({f.access_url}): {exc}",
+        )
 
     if content is None:
         raise HTTPException(status_code=502, detail="ALLRIS returned no content for this file")
