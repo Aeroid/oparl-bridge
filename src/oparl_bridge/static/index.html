@@ -18,6 +18,21 @@
         /* Search highlight */
         mark { background: #fff3cd; padding: 0 2px; border-radius: 2px; }
 
+        /* Result badge */
+        .result-badge {
+            display: inline-block; font-size: 0.7em; font-weight: 600;
+            padding: 1px 6px; border-radius: 3px; white-space: nowrap;
+            vertical-align: middle; margin-left: 0.3em;
+        }
+        .result-ACCEPTED  { background: #d4edda; color: #155724; }
+        .result-REJECTED  { background: #f8d7da; color: #721c24; }
+        .result-DEFERRED  { background: #fff3cd; color: #856404; }
+        .result-NODECISION{ background: #e2e3e5; color: #383d41; }
+
+        /* Collapsible detail per TOP */
+        .top-detail { font-size: 0.85em; color: var(--pico-muted-color); margin-top: 0.3rem; }
+        .top-detail p { margin: 0.15rem 0; }
+
         /* Split layout for wide screens */
         .split-layout {
             display: grid;
@@ -205,9 +220,25 @@
                                 <td>
                                     <span x-text="item.name"></span>
                                     <small x-show="!item.public"> (nichtöffentlich)</small>
+                                    <!-- Beschluss + Abstimmung -->
+                                    <template x-if="item.result || item.resolutionText || item.voteText">
+                                        <div class="top-detail">
+                                            <template x-if="item.result">
+                                                <span :class="'result-badge result-' + item.result"
+                                                      x-text="resultLabel(item.result)"></span>
+                                            </template>
+                                            <template x-if="item.voteText">
+                                                <p x-text="item.voteText"></p>
+                                            </template>
+                                            <template x-if="item.resolutionText">
+                                                <p><em x-text="item.resolutionText"></em></p>
+                                            </template>
+                                        </div>
+                                    </template>
                                 </td>
                                 <td x-text="item.paper?.reference || ''"></td>
                                 <td>
+                                    <!-- Vorlage files -->
                                     <div class="files" x-show="item.paper?.files?.length">
                                         <template x-for="file in (item.paper?.files || [])" :key="file.id">
                                             <a :href="proxyUrl(file.id)"
@@ -215,6 +246,17 @@
                                                @click="wide && ($event.preventDefault(), openPdf(file))"
                                                x-text="file.name"
                                                :style="activePdfId === file.id ? 'font-weight:600' : ''"></a>
+                                        </template>
+                                    </div>
+                                    <!-- Agenda item attachments (Anlagen, Wortbeiträge) -->
+                                    <div class="files" x-show="item.files?.length">
+                                        <template x-for="file in (item.files || [])" :key="file.id">
+                                            <a :href="proxyUrl(file.id)"
+                                               target="_blank"
+                                               @click="wide && ($event.preventDefault(), openPdf(file))"
+                                               x-text="file.name"
+                                               :style="activePdfId === file.id ? 'font-weight:600' : ''"
+                                               style="font-style:italic"></a>
                                         </template>
                                     </div>
                                 </td>
@@ -420,6 +462,11 @@ function app() {
             if (!text || !this.query.trim()) return text;
             const q = this.query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             return text.replace(new RegExp(q, 'gi'), m => `<mark>${m}</mark>`);
+        },
+
+        resultLabel(result) {
+            return {ACCEPTED: 'beschlossen', REJECTED: 'abgelehnt',
+                    DEFERRED: 'vertagt', NODECISION: 'zur Kenntnis'}[result] || result;
         },
 
         formatDate(iso) {

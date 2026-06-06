@@ -54,7 +54,7 @@ def db_with_data():
 def test_root(client):
     r = client.get("/")
     assert r.status_code == 200
-    assert "oparl_endpoint" in r.json()
+    assert "text/html" in r.headers["content-type"]
 
 
 def test_system_endpoint(client):

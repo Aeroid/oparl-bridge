@@ -36,6 +36,10 @@ class ScrapedAgendaItem:
     public: bool = True
     paper_id: int | None = None  # VOLFDNR
     paper_reference: str | None = None  # e.g. "VO/26/04523"
+    result: str | None = None           # ACCEPTED / REJECTED / DEFERRED / NODECISION
+    resolution_text: str | None = None  # raw Beschlusstext
+    vote_text: str | None = None        # raw Abstimmungsergebnis
+    files: list["ScrapedFile"] = field(default_factory=list)  # Anlagen + Wortbeiträge
 
 
 @dataclass
@@ -106,18 +110,38 @@ class AllrisScraper:
         finally:
             await page.close()
 
-    async def fetch_file_content(self, paper_id: int, file_url: str) -> bytes | None:
-        """Fetch a PDF from ALLRIS by navigating to vo020 and intercepting the download.
+    async def fetch_file_content(
+        self, source_id: int, file_url: str, source_page: str = "paper"
+    ) -> bytes | None:
+        """Fetch a PDF from ALLRIS using Playwright route interception.
 
-        Wicket resource URLs require the browser to be on an ALLRIS page when
-        the request is made. We navigate to vo020, set up a route interceptor
-        on the specific PDF URL, click the matching link, and capture the bytes.
+        source_page="paper"   → navigates to vo020?VOLFDNR=source_id
+        source_page="meeting" → navigates to to010?SILFDNR=source_id and expands all TOPs
         """
         page = await self._new_page()
         try:
-            # Session warmup (no rate-limiting delay needed — single fetch)
             await page.goto(self._url("/gr010"), wait_until="networkidle")
-            await page.goto(self._url(f"/vo020?VOLFDNR={paper_id}"), wait_until="networkidle")
+            if source_page == "meeting":
+                await page.goto(
+                    self._url(f"/to010?SILFDNR={source_id}&refresh=false"),
+                    wait_until="networkidle",
+                )
+                # Expand all TOPs so Wicket registers the resource URLs.
+                expand_btns = await page.query_selector_all(
+                    "table tr td:first-child a"
+                )
+                for btn in expand_btns:
+                    try:
+                        await btn.click()
+                        await page.wait_for_timeout(200)
+                    except Exception:
+                        pass
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=15000)
+                except Exception:
+                    pass
+            else:
+                await page.goto(self._url(f"/vo020?VOLFDNR={source_id}"), wait_until="networkidle")
 
             captured: asyncio.Future = asyncio.get_running_loop().create_future()
             filename = file_url.rsplit("/", 1)[-1]
@@ -315,18 +339,44 @@ async def _parse_agenda_items(page: Page) -> list[ScrapedAgendaItem]:
     Parse Tagesordnungspunkte from a to010 page.
 
     to010 column structure:
-      cells[0]: +/- expand button
+      cells[0]: +/- expand button (Wicket Ajax link)
       cells[1]: TOP number ("Ö 1", "N 2") — "N" prefix = nichtöffentlich
       cells[2]: name with to020?TOLFDNR= link
       cells[3]: empty
       cells[4]: Vorlage reference — vo020?VOLFDNR= link (or to010 for Protokolle)
       cells[5]: Beschlussart
-    """
-    results: list[ScrapedAgendaItem] = []
 
-    rows = await page.query_selector_all("table tr")
-    for row in rows:
-        # Name link is in cells[2] (to020?TOLFDNR=...)
+    Clicking the expand button reveals Beschlusstext, Abstimmungsergebnis, and
+    any attachments (Anlagen, Wortbeiträge) in a sibling row inserted by Wicket.
+    """
+    base_url = page.url.split("/allris/")[0]
+
+    # Step 1: Collect TOP row handles and click all expand buttons.
+    # We keep the handles because DOM mutations (new rows) don't invalidate them.
+    all_rows = await page.query_selector_all("table tr")
+    top_row_handles = []
+    for row in all_rows:
+        link = await row.query_selector("td:nth-child(3) a[href*='to020']")
+        if link is None:
+            continue
+        top_row_handles.append(row)
+        expand_btn = await row.query_selector("td:first-child a")
+        if expand_btn:
+            try:
+                await expand_btn.click()
+                await page.wait_for_timeout(250)
+            except Exception:
+                pass
+
+    if top_row_handles:
+        try:
+            await page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
+
+    # Step 2: Parse each TOP row and its immediately following detail row.
+    results: list[ScrapedAgendaItem] = []
+    for row in top_row_handles:
         link = await row.query_selector("td:nth-child(3) a[href*='to020']")
         if link is None:
             continue
@@ -341,7 +391,6 @@ async def _parse_agenda_items(page: Page) -> list[ScrapedAgendaItem]:
 
         number_text = (await cells[1].inner_text()).strip() if len(cells) > 1 else ""
         number = number_text or None
-        # TOP numbers starting with "N" are nichtöffentlich ("N 1", "N 2", ...)
         public = not number_text.upper().startswith("N ")
 
         paper_id = None
@@ -353,6 +402,20 @@ async def _parse_agenda_items(page: Page) -> list[ScrapedAgendaItem]:
                 paper_id = _extract_int_param(vo_href, "VOLFDNR")
                 paper_reference = (await vo_link.inner_text()).strip() or None
 
+        # Parse the detail row injected by Wicket after the expand click.
+        resolution_text = None
+        vote_text = None
+        files: list[ScrapedFile] = []
+        detail_handle = await row.evaluate_handle("el => el.nextElementSibling")
+        detail_elem = detail_handle.as_element()
+        if detail_elem:
+            # Only treat it as a detail row if it has no TOP link of its own.
+            sibling_top_link = await detail_elem.query_selector("a[href*='to020']")
+            if sibling_top_link is None:
+                resolution_text, vote_text, files = await _parse_detail_content(
+                    detail_elem, base_url
+                )
+
         results.append(
             ScrapedAgendaItem(
                 id=tolfdnr,
@@ -361,9 +424,79 @@ async def _parse_agenda_items(page: Page) -> list[ScrapedAgendaItem]:
                 public=public,
                 paper_id=paper_id,
                 paper_reference=paper_reference,
+                resolution_text=resolution_text,
+                vote_text=vote_text,
+                result=_derive_result(vote_text, resolution_text),
+                files=files,
             )
         )
     return results
+
+
+async def _parse_detail_content(
+    elem, base_url: str
+) -> tuple[str | None, str | None, list[ScrapedFile]]:
+    """Parse the Wicket-injected detail panel of an expanded TOP row."""
+    resolution_text = None
+    vote_text = None
+    files: list[ScrapedFile] = []
+
+    # Try table-based label/value pairs first (most common ALLRIS layout).
+    rows = await elem.query_selector_all("tr")
+    for row in rows:
+        cells = await row.query_selector_all("td, th")
+        if len(cells) >= 2:
+            label = (await cells[0].inner_text()).strip().lower().rstrip(":")
+            value = " ".join((await cells[1].inner_text()).split())
+            if "beschluss" in label and "art" not in label and "datum" not in label:
+                resolution_text = value or None
+            elif "abstimmung" in label:
+                vote_text = value or None
+
+    # Fallback: dt/dd pairs.
+    if not resolution_text and not vote_text:
+        dts = await elem.query_selector_all("dt")
+        for dt in dts:
+            label = (await dt.inner_text()).strip().lower().rstrip(":")
+            sibling = (await dt.evaluate_handle("el => el.nextElementSibling")).as_element()
+            if sibling:
+                value = " ".join((await sibling.inner_text()).split())
+                if "beschluss" in label and "art" not in label:
+                    resolution_text = value or None
+                elif "abstimmung" in label:
+                    vote_text = value or None
+
+    # PDF links (Anlagen, Wortbeiträge).
+    seen: set[str] = set()
+    for pdf_link in await elem.query_selector_all("a[href*='.pdf']"):
+        href = await pdf_link.get_attribute("href") or ""
+        if not href:
+            continue
+        abs_url = href if href.startswith("http") else f"{base_url}/allris/{href.lstrip('/')}"
+        if abs_url in seen:
+            continue
+        seen.add(abs_url)
+        link_name = " ".join((await pdf_link.inner_text()).split()) or abs_url.rsplit("/", 1)[-1]
+        files.append(ScrapedFile(name=link_name, url=abs_url))
+
+    return resolution_text, vote_text, files
+
+
+def _derive_result(vote_text: str | None, resolution_text: str | None) -> str | None:
+    """Derive an OParl result enum from raw German vote/resolution text."""
+    combined = f"{vote_text or ''} {resolution_text or ''}".lower()
+    if not combined.strip():
+        return None
+    if any(w in combined for w in ["abgelehnt", "abgewiesen"]):
+        return "REJECTED"
+    if any(w in combined for w in ["vertagt", "zurückgestellt", "verschoben"]):
+        return "DEFERRED"
+    if any(w in combined for w in ["beschlossen", "angenommen", "einstimmig"]):
+        return "ACCEPTED"
+    nodecision_words = ["zur kenntnis", "kenntnisnahme", "ohne beschluss", "ohne abstimmung"]
+    if any(w in combined for w in nodecision_words):
+        return "NODECISION"
+    return None
 
 
 async def _parse_paper(page: Page, paper_id: int) -> ScrapedPaper | None:

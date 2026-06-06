@@ -23,11 +23,22 @@ def _migrate(eng) -> None:
             conn.commit()
 
         ai_cols = {c["name"] for c in inspector.get_columns("agenda_items")}
-        if "paper_id" not in ai_cols:
-            conn.execute(text("ALTER TABLE agenda_items ADD COLUMN paper_id INTEGER REFERENCES papers(id)"))
-            conn.commit()
-        if "paper_reference" not in ai_cols:
-            conn.execute(text("ALTER TABLE agenda_items ADD COLUMN paper_reference VARCHAR(100)"))
+        for col, defn in [
+            ("paper_id", "INTEGER REFERENCES papers(id)"),
+            ("paper_reference", "VARCHAR(100)"),
+            ("result", "VARCHAR(50)"),
+            ("resolution_text", "TEXT"),
+            ("vote_text", "TEXT"),
+        ]:
+            if col not in ai_cols:
+                conn.execute(text(f"ALTER TABLE agenda_items ADD COLUMN {col} {defn}"))
+                conn.commit()
+
+        file_cols = {c["name"] for c in inspector.get_columns("files")}
+        if "agenda_item_id" not in file_cols:
+            conn.execute(text(
+                "ALTER TABLE files ADD COLUMN agenda_item_id INTEGER REFERENCES agenda_items(id)"
+            ))
             conn.commit()
 
 

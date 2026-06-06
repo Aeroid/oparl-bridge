@@ -91,7 +91,22 @@ async def sync_meeting_details(scraper: AllrisScraper, db: Session) -> None:
                 ai.public = item.public
                 ai.paper_id = item.paper_id
                 ai.paper_reference = item.paper_reference
+                ai.result = item.result
+                ai.resolution_text = item.resolution_text
+                ai.vote_text = item.vote_text
                 ai.scraped_at = datetime.utcnow()
+                for sf in item.files:
+                    existing = db.query(File).filter_by(
+                        agenda_item_id=ai.id, access_url=sf.url
+                    ).first()
+                    if existing is None:
+                        db.add(File(
+                            agenda_item_id=ai.id,
+                            name=sf.name,
+                            access_url=sf.url,
+                            mime_type="application/pdf",
+                            scraped_at=datetime.utcnow(),
+                        ))
             mtg.detail_scraped_at = datetime.utcnow()
         except Exception as exc:
             logger.warning("Failed to scrape detail for meeting %d: %s", mtg.id, exc)

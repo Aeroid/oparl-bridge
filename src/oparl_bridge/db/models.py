@@ -58,10 +58,18 @@ class AgendaItem(Base):
     number: Mapped[str | None] = mapped_column(String(50))
     name: Mapped[str] = mapped_column(String(500))
     public: Mapped[bool] = mapped_column(default=True)
+    # ACCEPTED / REJECTED / DEFERRED / NODECISION
+    result: Mapped[str | None] = mapped_column(String(50))
+    resolution_text: Mapped[str | None] = mapped_column(Text)  # raw Beschlusstext
+    vote_text: Mapped[str | None] = mapped_column(Text)         # raw Abstimmungsergebnis
     scraped_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     meeting: Mapped["Meeting | None"] = relationship(back_populates="agenda_items")
     paper: Mapped["Paper | None"] = relationship(back_populates="agenda_items")
+    files: Mapped[list["File"]] = relationship(
+        back_populates="agenda_item",
+        foreign_keys="[File.agenda_item_id]",
+    )
 
 
 class File(Base):
@@ -69,9 +77,11 @@ class File(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     paper_id: Mapped[int | None] = mapped_column(ForeignKey("papers.id"))
+    agenda_item_id: Mapped[int | None] = mapped_column(ForeignKey("agenda_items.id"))
     name: Mapped[str] = mapped_column(String(500))
     access_url: Mapped[str] = mapped_column(Text)
     mime_type: Mapped[str | None] = mapped_column(String(100))
     scraped_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     paper: Mapped["Paper | None"] = relationship(back_populates="files")
+    agenda_item: Mapped["AgendaItem | None"] = relationship(back_populates="files")

@@ -94,6 +94,7 @@ class OParlMapper:
                 "agendaItem": self._api(f"/oparl/v1.1/agendaitem/{item.id}"),
                 "paperReference": item.paper_reference,
             }
+        aux_files = [self._api(f"/oparl/v1.1/file/{f.id}") for f in item.files]
         return OParlAgendaItem(
             id=self._api(f"/oparl/v1.1/agendaitem/{item.id}"),
             type="https://schema.oparl.org/1.1/AgendaItem",
@@ -102,6 +103,9 @@ class OParlMapper:
             name=item.name,
             public=item.public,
             consultation=consultation,
+            result=item.result,
+            resolutionText=item.resolution_text,
+            auxiliaryFile=aux_files,
             created=item.scraped_at,
             modified=item.scraped_at,
         )

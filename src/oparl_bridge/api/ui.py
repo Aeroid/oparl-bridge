@@ -68,7 +68,11 @@ async def ui_meeting(meeting_id: int, db: Session = Depends(get_db)):
             "number": ai.number,
             "name": ai.name,
             "public": ai.public,
+            "result": ai.result,
+            "resolutionText": ai.resolution_text,
+            "voteText": ai.vote_text,
             "paper": paper,
+            "files": [{"id": f.id, "name": f.name} for f in ai.files],
         })
 
     return {
@@ -92,13 +96,24 @@ async def proxy_file(file_id: int, db: Session = Depends(get_db)):
     if f is None:
         raise HTTPException(status_code=404, detail="File not found")
 
-    if f.paper_id is None:
-        raise HTTPException(status_code=422, detail="File has no associated paper")
-
+    from oparl_bridge.db.models import AgendaItem
     from oparl_bridge.scraper import AllrisScraper
+
+    if f.paper_id is not None:
+        source_id = f.paper_id
+        source_page = "paper"
+    elif f.agenda_item_id is not None:
+        ai = db.get(AgendaItem, f.agenda_item_id)
+        if ai is None or ai.meeting_id is None:
+            raise HTTPException(status_code=422, detail="File has no resolvable source page")
+        source_id = ai.meeting_id
+        source_page = "meeting"
+    else:
+        raise HTTPException(status_code=422, detail="File has no associated paper or agenda item")
+
     try:
         async with AllrisScraper().session() as scraper:
-            content = await scraper.fetch_file_content(f.paper_id, f.access_url)
+            content = await scraper.fetch_file_content(source_id, f.access_url, source_page)
     except Exception as exc:
         logger.warning("Playwright PDF fetch failed for file %d: %s", file_id, exc)
         raise HTTPException(status_code=502, detail=f"Could not fetch PDF: {exc}")
