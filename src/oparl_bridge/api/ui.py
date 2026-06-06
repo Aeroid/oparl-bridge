@@ -1,6 +1,7 @@
 """UI-optimised endpoints — denormalised data for the SPA, not OParl-compliant."""
 
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -12,6 +13,16 @@ from oparl_bridge.db.session import get_db
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ui")
+
+
+def _top_sort_key(number: str | None) -> tuple[int, int]:
+    """Numeric sort key for TOP numbers like 'Ö 4', 'Ö 4.1', 'N 2'."""
+    if not number:
+        return (999999, 0)
+    m = re.search(r"(\d+)(?:\.(\d+))?", number)
+    if not m:
+        return (999999, 0)
+    return (int(m.group(1)), int(m.group(2) or 0))
 
 
 @router.get("/all")
@@ -28,7 +39,7 @@ async def ui_all(db: Session = Depends(get_db)):
                 "public": ai.public,
                 "paperRef": ai.paper_reference,
             }
-            for ai in mtg.agenda_items
+            for ai in sorted(mtg.agenda_items, key=lambda ai: _top_sort_key(ai.number))
         ]
         result.append({
             "id": mtg.id,
@@ -50,7 +61,7 @@ async def ui_meeting(meeting_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Meeting not found")
 
     items = []
-    for ai in mtg.agenda_items:
+    for ai in sorted(mtg.agenda_items, key=lambda ai: _top_sort_key(ai.number)):
         paper = None
         if ai.paper:
             paper = {
