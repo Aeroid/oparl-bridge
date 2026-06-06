@@ -107,7 +107,7 @@ The SPA at `/` provides a navigable view of the scraped data:
 - **Wide screens (>1500 px)**: split-view PDF iframe panel; narrower screens open PDFs in a new tab
 - **MD badge**: every detail view links to its Markdown equivalent
 
-PDFs are served via `/ui/proxy/file/{id}`. Each request launches a headless Playwright browser (~3–5 s) — the only approach that works with Wicket's session-scoped resource URLs.
+PDFs are served via `/ui/proxy/file/{id}`. The proxy visits the source page (vo020/to010/to020) via httpx to obtain a session cookie and Referer URL, then fetches the Wicket resource URL directly — typically under 1 s.
 
 ## Markdown endpoints (LLM-crawler-friendly)
 
