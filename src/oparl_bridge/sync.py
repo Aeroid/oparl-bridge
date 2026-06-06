@@ -1,6 +1,7 @@
 """Orchestrates scraping and persisting data to SQLite."""
 
 import logging
+import time
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -10,6 +11,24 @@ from oparl_bridge.db.session import SessionLocal, init_db
 from oparl_bridge.scraper import AllrisScraper
 
 logger = logging.getLogger(__name__)
+
+
+def _fmt_duration(seconds: float) -> str:
+    s = int(seconds)
+    if s < 90:
+        return f"{s}s"
+    m, s = divmod(s, 60)
+    return f"{m}:{s:02d} min"
+
+
+def _eta(delay_ms: int, total: int) -> str:
+    return f"~{_fmt_duration(delay_ms / 1000 * total)}"
+
+
+def _progress(i: int, total: int, start: float) -> str:
+    elapsed = time.monotonic() - start
+    remaining = (elapsed / i) * (total - i) if i else 0
+    return f"{i}/{total} — {_fmt_duration(remaining)} left"
 
 
 async def sync_organizations(scraper: AllrisScraper, db: Session) -> list[Organization]:
@@ -72,8 +91,13 @@ async def sync_meeting_details(scraper: AllrisScraper, db: Session) -> None:
     if not pending:
         logger.info("All meeting details already up to date.")
         return
-    logger.info("Scraping details for %d meetings ...", len(pending))
-    for mtg in pending:
+    logger.info(
+        "Scraping details for %d meeting(s) (%s) ...",
+        len(pending),
+        _eta(scraper.cfg.scraper_delay_ms, len(pending)),
+    )
+    start = time.monotonic()
+    for i, mtg in enumerate(pending, 1):
         try:
             scraped, items = await scraper.scrape_meeting_detail(mtg.id)
             if scraped.location:
@@ -110,8 +134,43 @@ async def sync_meeting_details(scraper: AllrisScraper, db: Session) -> None:
             mtg.detail_scraped_at = datetime.utcnow()
         except Exception as exc:
             logger.warning("Failed to scrape detail for meeting %d: %s", mtg.id, exc)
+        if i % 5 == 0 or i == len(pending):
+            logger.info("  %s", _progress(i, len(pending), start))
     db.commit()
     logger.info("Meeting details synced.")
+
+
+async def sync_agenda_item_details(scraper: AllrisScraper, db: Session) -> None:
+    """Scrape to020 for all AgendaItems not yet result-scraped."""
+    from oparl_bridge.scraper.base import _derive_result
+
+    pending = db.query(AgendaItem).filter(AgendaItem.result_scraped_at.is_(None)).all()
+    if not pending:
+        logger.info("All agenda item details already up to date.")
+        return
+    logger.info(
+        "Scraping to020 for %d agenda item(s) (%s) ...",
+        len(pending),
+        _eta(scraper.cfg.scraper_delay_ms, len(pending)),
+    )
+    start = time.monotonic()
+    for i, ai in enumerate(pending, 1):
+        try:
+            beschlussart, resolution_text, vote_text = (
+                await scraper.scrape_agenda_item_detail(ai.id)
+            )
+            ai.result = _derive_result(beschlussart, vote_text) or _derive_result(
+                resolution_text, vote_text
+            )
+            ai.resolution_text = resolution_text
+            ai.vote_text = vote_text
+            ai.result_scraped_at = datetime.utcnow()
+        except Exception as exc:
+            logger.warning("Failed to scrape agenda item detail %d: %s", ai.id, exc)
+        if i % 10 == 0 or i == len(pending):
+            logger.info("  %s", _progress(i, len(pending), start))
+    db.commit()
+    logger.info("Agenda item details synced.")
 
 
 async def sync_papers(scraper: AllrisScraper, db: Session) -> None:
@@ -132,8 +191,13 @@ async def sync_papers(scraper: AllrisScraper, db: Session) -> None:
     if not pending_ids:
         logger.info("All papers already synced.")
         return
-    logger.info("Scraping %d paper(s) ...", len(pending_ids))
-    for paper_id in pending_ids:
+    logger.info(
+        "Scraping %d paper(s) (%s) ...",
+        len(pending_ids),
+        _eta(scraper.cfg.scraper_delay_ms, len(pending_ids)),
+    )
+    start = time.monotonic()
+    for i, paper_id in enumerate(pending_ids, 1):
         try:
             scraped = await scraper.scrape_paper(paper_id)
             if scraped is None:
@@ -158,12 +222,14 @@ async def sync_papers(scraper: AllrisScraper, db: Session) -> None:
                     ))
         except Exception as exc:
             logger.warning("Failed to scrape paper %d: %s", paper_id, exc)
+        if i % 10 == 0 or i == len(pending_ids):
+            logger.info("  %s", _progress(i, len(pending_ids), start))
     db.commit()
     logger.info("Papers synced.")
 
 
 async def run_full_sync() -> None:
-    """Full sync: organizations → meetings → meeting details (location, agenda)."""
+    """Full sync: organizations → meetings → details → papers → item results."""
     init_db()
     scraper = AllrisScraper()
     async with scraper.session():
@@ -176,4 +242,5 @@ async def run_full_sync() -> None:
                     logger.warning("Failed to sync meetings for org %d: %s", org.id, exc)
             await sync_meeting_details(scraper, db)
             await sync_papers(scraper, db)
+            await sync_agenda_item_details(scraper, db)
     logger.info("Full sync complete.")

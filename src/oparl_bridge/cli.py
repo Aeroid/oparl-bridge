@@ -11,10 +11,11 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: oparl-bridge-sync <command>")
         print("Commands:")
-        print("  sync          Full sync of all data")
-        print("  sync-orgs     Sync organizations only")
-        print("  sync-papers   Sync papers/files for known agenda items")
-        print("  reset-details Reset detail_scraped_at (force re-scrape of all meeting details)")
+        print("  sync              Full sync of all data")
+        print("  sync-orgs         Sync organizations only")
+        print("  sync-papers       Sync papers/files for known agenda items")
+        print("  sync-item-details Scrape to020 for Beschluss/Abstimmung per agenda item")
+        print("  reset-details     Reset detail_scraped_at (re-scrape all meeting details)")
         sys.exit(1)
 
     cmd = sys.argv[1]
@@ -22,6 +23,19 @@ def main():
     if cmd == "sync":
         from oparl_bridge.sync import run_full_sync
         asyncio.run(run_full_sync())
+    elif cmd == "sync-item-details":
+        from oparl_bridge.db.session import SessionLocal, init_db
+        from oparl_bridge.scraper import AllrisScraper
+        from oparl_bridge.sync import sync_agenda_item_details
+
+        async def _run_item_details():
+            init_db()
+            scraper = AllrisScraper()
+            async with scraper.session():
+                with SessionLocal() as db:
+                    await sync_agenda_item_details(scraper, db)
+
+        asyncio.run(_run_item_details())
     elif cmd == "sync-papers":
         from oparl_bridge.db.session import SessionLocal, init_db
         from oparl_bridge.scraper import AllrisScraper

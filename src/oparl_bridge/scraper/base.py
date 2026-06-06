@@ -216,6 +216,20 @@ class AllrisScraper:
         finally:
             await page.close()
 
+    async def scrape_agenda_item_detail(
+        self, item_id: int
+    ) -> tuple[str | None, str | None, str | None]:
+        """Scrape to020 for Beschlussart, Beschlusstext, and Abstimmungsergebnis.
+
+        Returns (beschlussart, resolution_text, vote_text).
+        """
+        page = await self._new_page()
+        try:
+            await self._goto(page, self._url(f"/to020?TOLFDNR={item_id}"))
+            return await _parse_to020(page)
+        finally:
+            await page.close()
+
 
 # ---------------------------------------------------------------------------
 # Page parsers — kept separate from the scraper class for testability
@@ -497,6 +511,40 @@ def _derive_result(vote_text: str | None, resolution_text: str | None) -> str | 
     if any(w in combined for w in nodecision_words):
         return "NODECISION"
     return None
+
+
+async def _parse_to020(page: Page) -> tuple[str | None, str | None, str | None]:
+    """Parse Beschlussart, Beschlusstext, and Abstimmungsergebnis from a to020 page.
+
+    Returns (beschlussart, resolution_text, vote_text).
+
+    Structure:
+    - span#toBeschlussart        → standardised decision type ("ungeändert beschlossen" etc.)
+    - a[data-simpletooltip-text*="Beschluss"] → .compFull → div.docPart → Beschlusstext
+    - a[data-simpletooltip-text*="Abstimmungsergebnis"] → same → vote text
+    """
+    beschlussart = None
+    resolution_text = None
+    vote_text = None
+
+    el = await page.query_selector("#toBeschlussart")
+    if el:
+        beschlussart = (await el.inner_text()).strip() or None
+
+    for link in await page.query_selector_all("a[data-simpletooltip-text]"):
+        tip = (await link.get_attribute("data-simpletooltip-text") or "").lower()
+        section = (await link.evaluate_handle("el => el.closest('.compFull')")).as_element()
+        if not section:
+            continue
+        doc_parts = await section.query_selector_all("div.docPart")
+        parts = [" ".join((await dp.inner_text()).split()) for dp in doc_parts]
+        text = " ".join(parts).strip() or None
+        if "abstimmung" in tip:
+            vote_text = text
+        elif "beschluss" in tip:
+            resolution_text = text
+
+    return beschlussart, resolution_text, vote_text
 
 
 async def _parse_paper(page: Page, paper_id: int) -> ScrapedPaper | None:

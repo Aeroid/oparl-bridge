@@ -63,6 +63,7 @@ class AgendaItem(Base):
     resolution_text: Mapped[str | None] = mapped_column(Text)  # raw Beschlusstext
     vote_text: Mapped[str | None] = mapped_column(Text)         # raw Abstimmungsergebnis
     scraped_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    result_scraped_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     meeting: Mapped["Meeting | None"] = relationship(back_populates="agenda_items")
     paper: Mapped["Paper | None"] = relationship(back_populates="agenda_items")

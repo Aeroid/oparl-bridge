@@ -41,6 +41,11 @@ def _migrate(eng) -> None:
             ))
             conn.commit()
 
+        ai_cols2 = {c["name"] for c in inspector.get_columns("agenda_items")}
+        if "result_scraped_at" not in ai_cols2:
+            conn.execute(text("ALTER TABLE agenda_items ADD COLUMN result_scraped_at DATETIME"))
+            conn.commit()
+
 
 def get_db():
     db = SessionLocal()
