@@ -36,7 +36,7 @@
         /* Split layout for wide screens */
         .split-layout {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: 3fr 2fr;
             gap: 1rem;
             height: calc(100vh - 12rem);
         }
@@ -74,41 +74,42 @@
 <body x-data="app()" x-init="init()" x-cloak>
 
 <header class="container-fluid">
-    <hgroup>
-        <h1 x-text="body ? body.name : 'Ratsinformation'"></h1>
-        <p x-show="body">
-            Ratsinformationssystem ·
-            <a :href="body?.website" target="_blank" x-text="body?.website"></a>
-        </p>
-    </hgroup>
-
-    <div style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap; margin-bottom:0.5rem;">
-        <nav class="breadcrumb" aria-label="Breadcrumb">
-            <a href="#" @click.prevent="goOrgs()">Gremien</a>
-            <template x-if="selectedOrg">
-                <span>›</span>
-            </template>
-            <template x-if="selectedOrg && !meeting">
-                <span x-text="selectedOrg.orgName"></span>
-            </template>
-            <template x-if="selectedOrg && meeting">
-                <a href="#" @click.prevent="goMeetings()" x-text="selectedOrg.orgName"></a>
-            </template>
-            <template x-if="meeting">
-                <span>›</span>
-            </template>
-            <template x-if="meeting">
-                <span x-text="meeting.name"></span>
-            </template>
-        </nav>
-
-        <input type="search" placeholder="Suche…" x-model="query"
-               @input="onSearch()" style="max-width:24rem;"
-               :disabled="!allLoaded">
-        <small x-show="!allLoaded && loadingAll" style="color:var(--pico-muted-color)">
-            Lade Suchindex…
-        </small>
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;">
+        <hgroup style="margin:0; flex:1 1 auto;">
+            <h1 x-text="body ? body.name : 'Ratsinformation'"></h1>
+            <p x-show="body">
+                Ratsinformationssystem ·
+                <a :href="body?.website" target="_blank" x-text="body?.website"></a>
+            </p>
+        </hgroup>
+        <div style="display:flex; align-items:center; gap:0.5rem; flex:0 0 auto;">
+            <input type="search" placeholder="Suche…" x-model="query"
+                   @input="onSearch()" style="width:22rem;"
+                   :disabled="!allLoaded">
+            <small x-show="!allLoaded && loadingAll"
+                   style="color:var(--pico-muted-color); white-space:nowrap;">
+                Lade Suchindex…
+            </small>
+        </div>
     </div>
+    <nav class="breadcrumb" aria-label="Breadcrumb" style="margin-top:0.5rem;">
+        <a href="#" @click.prevent="goOrgs()">Gremien</a>
+        <template x-if="selectedOrg">
+            <span>›</span>
+        </template>
+        <template x-if="selectedOrg && !meeting">
+            <span x-text="selectedOrg.orgName"></span>
+        </template>
+        <template x-if="selectedOrg && meeting">
+            <a href="#" @click.prevent="goMeetings()" x-text="selectedOrg.orgName"></a>
+        </template>
+        <template x-if="meeting">
+            <span>›</span>
+        </template>
+        <template x-if="meeting">
+            <span x-text="meeting.name + (meeting.start ? ' (' + formatDateShort(meeting.start) + ')' : '')"></span>
+        </template>
+    </nav>
 </header>
 
 <main class="container-fluid">
@@ -209,8 +210,7 @@
                         <tr>
                             <th style="width:5em">TOP</th>
                             <th>Betreff</th>
-                            <th>Vorlage</th>
-                            <th>Dokumente</th>
+                            <th>Vorlage / Dokumente</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -236,9 +236,10 @@
                                         </div>
                                     </template>
                                 </td>
-                                <td x-text="item.paper?.reference || ''"></td>
                                 <td>
-                                    <!-- Vorlage files -->
+                                    <div x-show="item.paper?.reference" x-text="item.paper?.reference"
+                                         style="font-size:0.85em; margin-bottom:0.25rem;"></div>
+                                    <!-- Paper files -->
                                     <div class="files" x-show="item.paper?.files?.length">
                                         <template x-for="file in (item.paper?.files || [])" :key="file.id">
                                             <a :href="proxyUrl(file.id)"
@@ -310,13 +311,13 @@ function app() {
         loadingAll: false,
 
         // PDF split view
-        wide: window.innerWidth > 1500,
+        wide: window.innerWidth > 1024,
         activePdfUrl: null,
         activePdfId: null,
 
         async init() {
             window.addEventListener('resize', () => {
-                this.wide = window.innerWidth > 1500;
+                this.wide = window.innerWidth > 1024;
             });
 
             this.loading = true;
@@ -474,6 +475,13 @@ function app() {
             return new Date(iso).toLocaleString('de-DE', {
                 weekday: 'short', year: 'numeric', month: '2-digit',
                 day: '2-digit', hour: '2-digit', minute: '2-digit',
+            });
+        },
+
+        formatDateShort(iso) {
+            if (!iso) return '';
+            return new Date(iso).toLocaleDateString('de-DE', {
+                day: '2-digit', month: '2-digit', year: 'numeric',
             });
         },
     };
