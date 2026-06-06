@@ -183,10 +183,15 @@ class AllrisScraper:
     async def scrape_meetings_for_organization(
         self, organization_id: int
     ) -> list[ScrapedMeeting]:
-        """Scrape meetings for a specific committee from si018."""
+        """Scrape meetings for a specific committee from si018.
+
+        ALLRIS defaults to a ~15-month window; we expand the Zeitraum
+        filter to 2000-01-01–2099-12-31 to capture the full history.
+        """
         page = await self._new_page()
         try:
             await self._goto(page, self._url(f"/si018?GRLFDNR={organization_id}"))
+            await _set_full_date_range(page)
             return await _parse_meetings(page, organization_id)
         finally:
             await page.close()
@@ -274,6 +279,32 @@ async def _parse_organizations(page: Page) -> list[ScrapedOrganization]:
         # No short name or organization type available on this page.
         results.append(ScrapedOrganization(id=grlfdnr, name=name))
     return results
+
+
+async def _set_full_date_range(page: Page) -> None:
+    """Expand the ALLRIS si018 Zeitraum filter to cover all years.
+
+    ALLRIS defaults to a rolling ~15-month window.  Clicking the expand
+    button, filling the date inputs, and submitting loads all meetings.
+    """
+    expand = await page.query_selector("#showHideLink_id2")
+    if expand is None:
+        return
+    await expand.click()
+    try:
+        await page.wait_for_selector("#id12", state="visible", timeout=10000)
+    except Exception:
+        return
+    begin = await page.query_selector("#beginDateField")
+    end = await page.query_selector("#id17")
+    if begin:
+        await begin.fill("2000-01-01")
+    if end:
+        await end.fill("2099-12-31")
+    search_btn = await page.query_selector("#searchButton")
+    if search_btn:
+        await search_btn.click()
+        await page.wait_for_load_state("networkidle", timeout=30000)
 
 
 async def _parse_meetings(page: Page, organization_id: int | None) -> list[ScrapedMeeting]:
