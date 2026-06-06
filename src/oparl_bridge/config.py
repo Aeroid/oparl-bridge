@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     api_base_url: str = "http://localhost:8000"
     body_name: str = "Gemeinde Musterstadt"
     body_website: str = "https://your-municipality.invalid"
+    system_name: str = "Bürgerinformationssystem"
+    wikidata_id: str | None = None
+    favicon_b64: str | None = None
     scraper_timeout_ms: int = 30000
     scraper_headless: bool = True
     scraper_delay_ms: int = 1500

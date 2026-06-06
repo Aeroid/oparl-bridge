@@ -48,6 +48,9 @@ class OParlBody(OParlBase):
     organization: str  # URL to organization list
     meeting: str  # URL to meeting list
     paper: str  # URL to paper list
+    person: str  # URL to person list
+    system_name: str | None = Field(None, alias="systemName")
+    legislative_term: list = Field(default_factory=list, alias="legislativeTerm")
 
 
 class OParlOrganization(OParlBase):
@@ -128,6 +131,21 @@ class OParlFile(OParlBase):
     derivative_file: list[str] = Field(default_factory=list, alias="derivativeFile")
     file_license: str | None = Field(None, alias="fileLicense")
     text: str | None = None
+
+
+class OParlPerson(OParlBase):
+    type: str = "https://schema.oparl.org/1.1/Person"
+    body: OParlUrl
+    name: str
+    membership: list[OParlUrl] = Field(default_factory=list)
+
+
+class OParlMembership(OParlBase):
+    type: str = "https://schema.oparl.org/1.1/Membership"
+    person: OParlUrl
+    organization: OParlUrl
+    role: str | None = None
+    voting_right: bool | None = Field(None, alias="votingRight")
 
 
 class OParlList(BaseModel):

@@ -65,6 +65,8 @@ Session must be warmed up first (e.g. via gr010) before detail pages are accessi
 | `OPARL_API_BASE_URL` | `http://localhost:8000` | Fallback only — API derives URLs from the incoming request automatically |
 | `OPARL_BODY_NAME` | *(required)* | Municipality name — set in `.env` |
 | `OPARL_BODY_WEBSITE` | *(required)* | Municipality website — set in `.env` |
+| `OPARL_SYSTEM_NAME` | `Bürgerinformationssystem` | Label shown in the SPA header and browser title |
+| `OPARL_WIKIDATA_ID` | *(optional)* | Wikidata QID (e.g. `Q508054`) — enables Wappen image, Wikipedia link, and population count in the header |
 | `OPARL_SCRAPER_HEADLESS` | `true` | Run browser headless |
 | `OPARL_SCRAPER_DELAY_MS` | `1500` | Pause between requests (rate limiting) |
 

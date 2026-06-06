@@ -1,17 +1,25 @@
 """Maps DB models to OParl 1.1 Pydantic objects."""
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from oparl_bridge.config import Settings
 from oparl_bridge.config import settings as default_settings
-from oparl_bridge.db.models import AgendaItem, File, Meeting, Organization, Paper
+from oparl_bridge.db.models import AgendaItem, File, Meeting, Membership, Organization, Paper, Person
+
+if TYPE_CHECKING:
+    from oparl_bridge.wikidata import WikidataData
 from oparl_bridge.normalizer.oparl_schema import (
     OParlAgendaItem,
     OParlBody,
     OParlFile,
     OParlMeeting,
+    OParlMembership,
     OParlOrganization,
     OParlPaper,
+    OParlPerson,
     OParlSystem,
 )
 
@@ -39,7 +47,7 @@ class OParlMapper:
             body=self._api("/oparl/v1.1/bodies"),
         )
 
-    def body(self) -> OParlBody:
+    def body(self, wikidata: WikidataData | None = None) -> OParlBody:
         return OParlBody(
             id=self._api("/oparl/v1.1/body/1"),
             type="https://schema.oparl.org/1.1/Body",
@@ -49,9 +57,14 @@ class OParlMapper:
             organization=self._api("/oparl/v1.1/body/1/organizations"),
             meeting=self._api("/oparl/v1.1/body/1/meetings"),
             paper=self._api("/oparl/v1.1/body/1/papers"),
+            person=self._api("/oparl/v1.1/body/1/persons"),
+            systemName=self.cfg.system_name,
+            ags=wikidata.ags if wikidata else None,
+            equivalent=wikidata.equivalent_urls if wikidata else [],
         )
 
     def organization(self, org: Organization) -> OParlOrganization:
+        membership_urls = [self._api(f"/oparl/v1.1/membership/{m.id}") for m in org.memberships]
         return OParlOrganization(
             id=self._api(f"/oparl/v1.1/organization/{org.id}"),
             type="https://schema.oparl.org/1.1/Organization",
@@ -59,6 +72,7 @@ class OParlMapper:
             name=org.name,
             shortName=org.short_name,
             organizationType=org.organization_type,
+            membership=membership_urls,
             meeting=self._api(f"/oparl/v1.1/body/1/meetings?organization={org.id}"),
             created=org.scraped_at,
             modified=org.scraped_at,
@@ -134,6 +148,30 @@ class OParlMapper:
             accessUrl=f.access_url,
             created=f.scraped_at,
             modified=f.scraped_at,
+        )
+
+
+    def person(self, p: Person) -> OParlPerson:
+        membership_urls = [self._api(f"/oparl/v1.1/membership/{m.id}") for m in p.memberships]
+        return OParlPerson(
+            id=self._api(f"/oparl/v1.1/person/{p.id}"),
+            type="https://schema.oparl.org/1.1/Person",
+            body=self._api("/oparl/v1.1/body/1"),
+            name=p.name,
+            membership=membership_urls,
+            created=p.scraped_at,
+            modified=p.scraped_at,
+        )
+
+    def membership(self, m: Membership) -> OParlMembership:
+        return OParlMembership(
+            id=self._api(f"/oparl/v1.1/membership/{m.id}"),
+            type="https://schema.oparl.org/1.1/Membership",
+            person=self._api(f"/oparl/v1.1/person/{m.person_id}"),
+            organization=self._api(f"/oparl/v1.1/organization/{m.organization_id}"),
+            role=m.role,
+            created=m.person.scraped_at if m.person else None,
+            modified=m.person.scraped_at if m.person else None,
         )
 
 

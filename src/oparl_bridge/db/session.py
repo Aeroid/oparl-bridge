@@ -40,10 +40,21 @@ def _migrate(eng) -> None:
                 "ALTER TABLE files ADD COLUMN agenda_item_id INTEGER REFERENCES agenda_items(id)"
             ))
             conn.commit()
+        file_cols2 = {c["name"] for c in inspector.get_columns("files")}
+        if "meeting_id" not in file_cols2:
+            conn.execute(text(
+                "ALTER TABLE files ADD COLUMN meeting_id INTEGER REFERENCES meetings(id)"
+            ))
+            conn.commit()
 
         ai_cols2 = {c["name"] for c in inspector.get_columns("agenda_items")}
         if "result_scraped_at" not in ai_cols2:
             conn.execute(text("ALTER TABLE agenda_items ADD COLUMN result_scraped_at DATETIME"))
+            conn.commit()
+
+        ai_cols3 = {c["name"] for c in inspector.get_columns("agenda_items")}
+        if "word_contribution" not in ai_cols3:
+            conn.execute(text("ALTER TABLE agenda_items ADD COLUMN word_contribution TEXT"))
             conn.commit()
 
 

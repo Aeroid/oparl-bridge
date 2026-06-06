@@ -6,29 +6,32 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from oparl_bridge.db.models import AgendaItem, File, Meeting, Organization, Paper
+from oparl_bridge.db.models import AgendaItem, File, Meeting, Membership, Organization, Paper, Person
 from oparl_bridge.db.session import SessionLocal, init_db
 from oparl_bridge.scraper import AllrisScraper
 
 logger = logging.getLogger(__name__)
 
 
-def _fmt_duration(seconds: float) -> str:
-    s = int(seconds)
-    if s < 90:
-        return f"{s}s"
-    m, s = divmod(s, 60)
-    return f"{m}:{s:02d} min"
+def _eta_clock(seconds: float) -> str:
+    from datetime import datetime, timedelta
+    t = datetime.now() + timedelta(seconds=seconds)
+    return t.strftime('%H:%M')
 
 
-def _eta(delay_ms: int, total: int) -> str:
-    return f"~{_fmt_duration(delay_ms / 1000 * total)}"
+def _eta_initial(total: int, delay_ms: int, per_item_s: float = 3.5) -> str:
+    """Initial ETA estimate using realistic per-item time (delay + page load)."""
+    secs = total * (delay_ms / 1000 + per_item_s)
+    return f"fertig ca. {_eta_clock(secs)}"
 
 
 def _progress(i: int, total: int, start: float) -> str:
     elapsed = time.monotonic() - start
-    remaining = (elapsed / i) * (total - i) if i else 0
-    return f"{i}/{total} — {_fmt_duration(remaining)} left"
+    per_item = elapsed / i
+    remaining = per_item * (total - i)
+    rate = 60 / per_item
+    pct = 100 * i // total
+    return f"{i}/{total} ({pct}%)  {rate:.0f}/min  fertig ca. {_eta_clock(remaining)}"
 
 
 async def sync_organizations(scraper: AllrisScraper, db: Session) -> list[Organization]:
@@ -47,6 +50,31 @@ async def sync_organizations(scraper: AllrisScraper, db: Session) -> list[Organi
         orgs.append(org)
     db.commit()
     logger.info("Synced %d organizations", len(orgs))
+
+    # Seed stub meetings from gr010 Letzte/Nächste Sitzung columns.
+    # These capture meetings (especially future ones) that si018 may not list
+    # because they have no SILFDNR link yet.
+    from datetime import datetime as dt
+    stubs_added = 0
+    for s in scraped:
+        for silfdnr, date_str in [(s.last_silfdnr, s.last_date), (s.next_silfdnr, s.next_date)]:
+            if silfdnr is None or db.get(Meeting, silfdnr) is not None:
+                continue
+            mtg = Meeting(id=silfdnr, name="")
+            mtg.organization_id = s.id
+            if date_str:
+                try:
+                    mtg.start = dt.strptime(date_str, "%d.%m.%Y")
+                except ValueError:
+                    pass
+            mtg.detail_scraped_at = None
+            mtg.scraped_at = datetime.utcnow()
+            db.add(mtg)
+            stubs_added += 1
+    if stubs_added:
+        db.commit()
+        logger.info("Seeded %d stub meeting(s) from gr010", stubs_added)
+
     return orgs
 
 
@@ -94,7 +122,7 @@ async def sync_meeting_details(scraper: AllrisScraper, db: Session) -> None:
     logger.info(
         "Scraping details for %d meeting(s) (%s) ...",
         len(pending),
-        _eta(scraper.cfg.scraper_delay_ms, len(pending)),
+        _eta_initial(len(pending), scraper.cfg.scraper_delay_ms),
     )
     start = time.monotonic()
     for i, mtg in enumerate(pending, 1):
@@ -104,6 +132,16 @@ async def sync_meeting_details(scraper: AllrisScraper, db: Session) -> None:
                 mtg.location = scraped.location
             if scraped.name:
                 mtg.name = scraped.name
+            # Meeting-level documents (Bekanntmachung, Protokoll, etc.)
+            db.query(File).filter(File.meeting_id == mtg.id).delete()
+            for sf in scraped.files:
+                db.add(File(
+                    meeting_id=mtg.id,
+                    name=sf.name,
+                    access_url=sf.url,
+                    mime_type="application/pdf",
+                    scraped_at=datetime.utcnow(),
+                ))
             for item in items:
                 ai = db.get(AgendaItem, item.id)
                 if ai is None:
@@ -134,9 +172,9 @@ async def sync_meeting_details(scraper: AllrisScraper, db: Session) -> None:
             mtg.detail_scraped_at = datetime.utcnow()
         except Exception as exc:
             logger.warning("Failed to scrape detail for meeting %d: %s", mtg.id, exc)
-        if i % 5 == 0 or i == len(pending):
+        if i % 10 == 0 or i == len(pending):
+            db.commit()
             logger.info("  %s", _progress(i, len(pending), start))
-    db.commit()
     logger.info("Meeting details synced.")
 
 
@@ -151,12 +189,12 @@ async def sync_agenda_item_details(scraper: AllrisScraper, db: Session) -> None:
     logger.info(
         "Scraping to020 for %d agenda item(s) (%s) ...",
         len(pending),
-        _eta(scraper.cfg.scraper_delay_ms, len(pending)),
+        _eta_initial(len(pending), scraper.cfg.scraper_delay_ms),
     )
     start = time.monotonic()
     for i, ai in enumerate(pending, 1):
         try:
-            beschlussart, resolution_text, vote_text = (
+            beschlussart, resolution_text, vote_text, word_contribution, item_files = (
                 await scraper.scrape_agenda_item_detail(ai.id)
             )
             ai.result = _derive_result(beschlussart, vote_text) or _derive_result(
@@ -164,12 +202,26 @@ async def sync_agenda_item_details(scraper: AllrisScraper, db: Session) -> None:
             )
             ai.resolution_text = resolution_text
             ai.vote_text = vote_text
+            ai.word_contribution = word_contribution
+            # Anlagen from to020 (sentinel URLs) — replace existing ones
+            db.query(File).filter(
+                File.agenda_item_id == ai.id,
+                File.access_url.like("allris://to020/%"),
+            ).delete()
+            for sf in item_files:
+                db.add(File(
+                    agenda_item_id=ai.id,
+                    name=sf.name,
+                    access_url=sf.url,
+                    mime_type="application/pdf",
+                    scraped_at=datetime.utcnow(),
+                ))
             ai.result_scraped_at = datetime.utcnow()
         except Exception as exc:
             logger.warning("Failed to scrape agenda item detail %d: %s", ai.id, exc)
-        if i % 10 == 0 or i == len(pending):
+        if i % 50 == 0 or i == len(pending):
+            db.commit()
             logger.info("  %s", _progress(i, len(pending), start))
-    db.commit()
     logger.info("Agenda item details synced.")
 
 
@@ -222,10 +274,39 @@ async def sync_papers(scraper: AllrisScraper, db: Session) -> None:
                     ))
         except Exception as exc:
             logger.warning("Failed to scrape paper %d: %s", paper_id, exc)
-        if i % 10 == 0 or i == len(pending_ids):
+        if i % 25 == 0 or i == len(pending_ids):
+            db.commit()
             logger.info("  %s", _progress(i, len(pending_ids), start))
-    db.commit()
     logger.info("Papers synced.")
+
+
+async def sync_memberships(
+    scraper: AllrisScraper, db: Session, orgs: list[Organization]
+) -> None:
+    """Scrape gr020 for each organization and persist Person + Membership records."""
+    logger.info("Scraping memberships for %d organization(s) ...", len(orgs))
+    total = 0
+    for org in orgs:
+        try:
+            scraped = await scraper.scrape_memberships(org.id)
+        except Exception as exc:
+            logger.warning("Failed to scrape memberships for org %d: %s", org.id, exc)
+            continue
+        # Replace memberships for this org on each sync
+        db.query(Membership).filter(Membership.organization_id == org.id).delete()
+        for s in scraped:
+            person = db.get(Person, s.person_id)
+            if person is None:
+                person = Person(id=s.person_id, name=s.person_name)
+                db.add(person)
+            else:
+                person.name = s.person_name
+            person.scraped_at = datetime.utcnow()
+            db.add(Membership(person_id=s.person_id, organization_id=org.id, role=s.role))
+            total += 1
+        db.commit()
+        logger.info("  org %d: %d member(s)", org.id, len(scraped))
+    logger.info("Memberships synced: %d total", total)
 
 
 async def run_full_sync() -> None:
@@ -240,6 +321,7 @@ async def run_full_sync() -> None:
                     await sync_meetings(scraper, db, organization_id=org.id)
                 except Exception as exc:
                     logger.warning("Failed to sync meetings for org %d: %s", org.id, exc)
+            await sync_memberships(scraper, db, orgs)
             await sync_meeting_details(scraper, db)
             await sync_papers(scraper, db)
             await sync_agenda_item_details(scraper, db)

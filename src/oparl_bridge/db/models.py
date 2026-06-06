@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -18,6 +18,7 @@ class Organization(Base):
     scraped_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     meetings: Mapped[list["Meeting"]] = relationship(back_populates="organization")
+    memberships: Mapped[list["Membership"]] = relationship(back_populates="organization")
 
 
 class Meeting(Base):
@@ -33,6 +34,7 @@ class Meeting(Base):
 
     organization: Mapped["Organization | None"] = relationship(back_populates="meetings")
     agenda_items: Mapped[list["AgendaItem"]] = relationship(back_populates="meeting")
+    files: Mapped[list["File"]] = relationship(back_populates="meeting")
 
 
 class Paper(Base):
@@ -63,6 +65,7 @@ class AgendaItem(Base):
     resolution_text: Mapped[str | None] = mapped_column(Text)  # raw Beschlusstext
     vote_text: Mapped[str | None] = mapped_column(Text)         # raw Abstimmungsergebnis
     scraped_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    word_contribution: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_scraped_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     meeting: Mapped["Meeting | None"] = relationship(back_populates="agenda_items")
@@ -79,6 +82,7 @@ class File(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     paper_id: Mapped[int | None] = mapped_column(ForeignKey("papers.id"))
     agenda_item_id: Mapped[int | None] = mapped_column(ForeignKey("agenda_items.id"))
+    meeting_id: Mapped[int | None] = mapped_column(ForeignKey("meetings.id"))
     name: Mapped[str] = mapped_column(String(500))
     access_url: Mapped[str] = mapped_column(Text)
     mime_type: Mapped[str | None] = mapped_column(String(100))
@@ -86,3 +90,28 @@ class File(Base):
 
     paper: Mapped["Paper | None"] = relationship(back_populates="files")
     agenda_item: Mapped["AgendaItem | None"] = relationship(back_populates="files")
+    meeting: Mapped["Meeting | None"] = relationship(back_populates="files")
+
+
+class Person(Base):
+    __tablename__ = "persons"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)  # KPLFDNR
+    name: Mapped[str] = mapped_column(String(200))
+    scraped_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    memberships: Mapped[list["Membership"]] = relationship(back_populates="person")
+
+
+class Membership(Base):
+    __tablename__ = "memberships"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    person_id: Mapped[int] = mapped_column(Integer, ForeignKey("persons.id"))
+    organization_id: Mapped[int] = mapped_column(Integer, ForeignKey("organizations.id"))
+    role: Mapped[str | None] = mapped_column(String(200))
+
+    person: Mapped["Person"] = relationship(back_populates="memberships")
+    organization: Mapped["Organization"] = relationship(back_populates="memberships")
+
+
