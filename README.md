@@ -105,8 +105,7 @@ The SPA at `/` provides a navigable view of the scraped data:
 - **Gremien** → **Sitzungsliste** → **Tagesordnung** with agenda items, Vorlagen, and PDFs
 - **Search**: live full-text search across all meetings, agenda items, and Vorlage references — client-side, no server requests per keystroke
 - **Beschlüsse**: result badge (beschlossen / abgelehnt / vertagt / zur Kenntnis) always visible; Abstimmungsergebnis, Beschlusstext, and Wortbeiträge toggled via "mit Details" checkbox
-- **Wide screens (>1500 px)**: split-view PDF iframe panel; narrower screens open PDFs in a new tab
-- **Mobile**: native scrolling preserved (height/overflow CSS scoped to `min-width: 1025px`)
+- **Responsive layouts**: all views (Gremien, Sitzungen, Personen, Admin, Suche) switch from tables to compact card lists below 640 px. Meeting detail split-panel (agenda + PDF iframe) activates above 1024 px; PDFs open in a new tab on narrower screens.
 - **Admin view**: `/ui/admin/recent` lists the 100 most recently scraped items with type badges (to010/to020/vo020), timestamps, and meeting links
 - **MD badge**: every detail view links to its Markdown equivalent
 
@@ -186,7 +185,8 @@ uv run python scripts/validate_oparl.py
 - **nichtöffentlich items** (N* prefix) always return 302 from to020 and are skipped without a request.
 - **Rate limiting**: configurable delay before every Playwright `page.goto()` and every httpx request (`OPARL_SCRAPER_DELAY_MS`).
 - **Incremental sync**: `Meeting.detail_scraped_at` tracks scraped meetings; only new ones are re-scraped.
-- **SQLite migrations**: new columns are added via `ALTER TABLE` in `_migrate()` — no Alembic.
+- **SQLite optimizations**: WAL journal mode, `synchronous=NORMAL`, 32 MB page cache, 128 MB mmap. Seven indexes on `meetings`, `agenda_items`, and `files` foreign keys applied automatically via `_migrate()` at startup.
+- **SQLite migrations**: new columns and indexes are added via `ALTER TABLE` / `CREATE INDEX IF NOT EXISTS` in `_migrate()` — no Alembic.
 - **Wikidata cache**: single JSON file (`wikidata_cache.json`, gitignored), refreshed in background if stale.
 
 ## License

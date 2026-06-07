@@ -1067,9 +1067,9 @@ function app() {
             this.view = 'meetings';
             this.orgMembers = [];
             const realMeetings = this.allMeetings.filter(m => m.orgId === org.orgId);
-            const allStarts = new Set(realMeetings.map(m => m.start ? m.start.slice(0, 16) : null));
+            const allStarts = new Set(realMeetings.map(m => m.start ? m.start.slice(0, 10) : null));
             const synthetic = (org.futureMeetingDates || [])
-                .filter(iso => !allStarts.has(iso.slice(0, 16)))
+                .filter(iso => !allStarts.has(iso.slice(0, 10)))
                 .map(iso => ({ id: null, orgId: org.orgId, start: iso, name: org.orgName, items: [] }));
             this.meetings = [...synthetic, ...realMeetings]
                 .sort((a, b) => (b.start || '').localeCompare(a.start || ''));
