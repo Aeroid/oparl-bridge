@@ -141,9 +141,28 @@ async def md_committee(org_id: int, request: Request, db: Session = Depends(get_
     lines.append(f"[← Alle Gremien]({base}/md/)\n")
     lines.append("## Sitzungen\n")
 
+    # Merge real meetings with planned (no-ID) entries, sort descending
+    import json as _json
+    from datetime import datetime as _dt
+    future_dates = _json.loads(org.future_meeting_dates) if org.future_meeting_dates else []
+    if not future_dates and org.next_meeting_date:
+        future_dates = [org.next_meeting_date]
+    existing_starts = {m.start.isoformat()[:16] for m in meetings if m.start}
+
+    # Build unified list: (iso_str, line_text)
+    entries: list[tuple[str, str]] = []
     for mtg in meetings:
-        date_str = _fmt_date_short(mtg.start)
-        lines.append(f"- [{date_str} — {mtg.name}]({base}/md/sitzungen/{mtg.id})")
+        iso = mtg.start.isoformat() if mtg.start else ""
+        entries.append((iso, f"- [{_fmt_date_short(mtg.start)} — {mtg.name}]({base}/md/sitzungen/{mtg.id})"))
+    for iso in future_dates:
+        if iso[:16] not in existing_starts:
+            try:
+                entries.append((iso, f"- {_fmt_date_short(_dt.fromisoformat(iso))} — {org.name} (geplant)"))
+            except ValueError:
+                pass
+
+    for _, line in sorted(entries, key=lambda x: x[0], reverse=True):
+        lines.append(line)
 
     lines.append(_footer())
     latest = max((m.scraped_at for m in meetings if m.scraped_at), default=org.scraped_at)

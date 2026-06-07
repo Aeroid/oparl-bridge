@@ -17,6 +17,12 @@
             max-width: 100%;
             padding-inline: 1rem;
         }
+        body > main { padding-block-end: 0; }
+        @media (min-width: 1025px) {
+            html, body { height: 100%; }
+            body { display: flex; flex-direction: column; }
+            body > main { flex: 1 1 0; min-height: 0; overflow: hidden; }
+        }
         .container-fluid { padding-inline: 0.75rem; }
 
         .breadcrumb {
@@ -58,10 +64,15 @@
         /* Split layout — flex so drag handle can resize the PDF panel */
         .split-layout {
             display: flex;
-            height: calc(100vh - 12rem);
+            height: 100%;
             overflow: hidden;
         }
-        .split-content { flex: 1 1 auto; overflow-y: auto; min-width: 200px; }
+        .split-content { flex: 0 0 auto; overflow: hidden; display: flex; flex-direction: column; min-width: 300px; }
+        @media (min-width: 1025px) {
+            .meeting-scroll-wrap { overflow-y: auto; }
+            .split-content .meeting-scroll-wrap { flex: 1 1 0; min-height: 0; }
+            .meeting-scroll-wrap thead th { position: sticky; top: 0; z-index: 1; background: var(--pico-background-color, #fff); }
+        }
         .split-handle {
             flex: 0 0 5px;
             cursor: col-resize;
@@ -71,7 +82,7 @@
             transition: background 0.15s;
         }
         .split-handle:hover { background: var(--pico-primary); }
-        .split-pdf { position: relative; flex: 0 0 auto; min-width: 180px; overflow: hidden; }
+        .split-pdf { position: relative; flex: 1 1 auto; min-width: 300px; overflow: hidden; }
         .pdf-loading-overlay {
             position: absolute; inset: 0; z-index: 10;
             display: flex; align-items: center; justify-content: center;
@@ -105,10 +116,15 @@
         footer { margin-top: 3rem; padding-top: 1rem;
                  border-top: 1px solid var(--pico-muted-border-color); }
         td { vertical-align: top; }
+        table { border-collapse: collapse; }
+        thead tr { border-bottom: 1px solid var(--pico-muted-border-color); }
+        tbody tr { border-bottom: none; }
+        tbody tr:nth-child(even) td, tbody tr:nth-child(even) th { background-color: #f0f0f0; }
+        tbody tr:nth-child(odd) td, tbody tr:nth-child(odd) th { background-color: transparent; }
         input[type=search] { margin-bottom: 0; }
         .search-result-meta { font-size: 0.8em; color: var(--pico-muted-color); }
 
-        .tab-nav { display: flex; gap: 1.5rem; border-bottom: 1px solid var(--pico-muted-border-color); margin-bottom: 1rem; }
+        .tab-nav { display: flex; justify-content: flex-start; gap: 1.5rem; border-bottom: 1px solid var(--pico-muted-border-color); margin-bottom: 1rem; }
         .tab-nav a { padding-bottom: 0.4rem; text-decoration: none; color: var(--pico-muted-color); border-bottom: 2px solid transparent; }
         .tab-nav a.active { color: var(--pico-color); border-bottom-color: var(--pico-primary); font-weight: 600; }
     </style>
@@ -143,14 +159,17 @@
                 </p>
             </hgroup>
         </div>
-        <div style="display:flex; align-items:center; gap:0.5rem; flex:0 0 auto;">
-            <input type="search" placeholder="Suche…" x-model="query"
-                   @input="onSearch()" style="width:22rem;"
+        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:0.25rem; flex:0 0 auto;">
+            <input type="search" placeholder="Betreffsuche… z.B. Bahn Fahrrad" x-model="query"
+                   @input="onSearch()" style="width:min(22rem, 100%); margin:0;"
                    :disabled="!allLoaded">
-            <small x-show="!allLoaded && loadingAll"
-                   style="color:var(--pico-muted-color); white-space:nowrap;">
-                Lade Suchindex…
-            </small>
+            <div style="font-size:0.75em; display:flex; gap:0.5rem;">
+                <a href="/oparl/v1.1" target="_blank">OParl API</a>
+                <span style="color:var(--pico-muted-color)">·</span>
+                <a href="/docs" target="_blank">API Docs</a>
+                <span style="color:var(--pico-muted-color)">·</span>
+                <a href="#" @click.prevent="goAdmin()">Admin</a>
+            </div>
         </div>
     </div>
     <nav class="breadcrumb" aria-label="Breadcrumb" style="margin-top:0.5rem;">
@@ -208,17 +227,23 @@
     <!-- Organisations -->
     <template x-if="view === 'orgs' && !loading && !query.trim()">
         <section>
-            <table>
+            <table style="max-width:800px; width:100%; table-layout:fixed;">
                 <thead>
-                    <tr><th>Organisation</th><th>Letzte Sitzung</th><th>Nächste Sitzung</th></tr>
+                    <tr>
+                        <th>Organisation</th>
+                        <th style="width:155px; white-space:nowrap;">Letzte Sitzung</th>
+                        <th style="width:175px; white-space:nowrap;">Nächste Sitzung</th>
+                    </tr>
                 </thead>
                 <tbody>
                     <template x-for="row in flatOrgRows" :key="row.isHeader ? 'h-'+row.type : row.orgId">
                         <tr>
                             <!-- Gruppenüberschrift -->
                             <td x-show="row.isHeader" colspan="3"
-                                style="padding-top:1.25rem; padding-bottom:0.2rem; border-bottom:none;
-                                       color:var(--pico-muted-color); font-size:0.8em; font-weight:600;
+                                style="padding-top:2.5rem; padding-bottom:0.2rem;
+                                       border-top:1px solid var(--pico-muted-border-color); border-bottom:none;
+                                       background:#fff;
+                                       font-size:0.8em; font-weight:600;
                                        text-transform:uppercase; letter-spacing:0.05em;"
                                 x-text="row.type"></td>
                             <!-- Org-Zeile -->
@@ -238,11 +263,24 @@
                             </td>
                             <td x-show="!row.isHeader" style="white-space:nowrap">
                                 <template x-if="!row.isHeader && row.nextMeetingId">
-                                    <a href="#"
-                                       @click.prevent="showMeetings(row); showMeeting(allMeetings.find(m => m.id === row.nextMeetingId))"
-                                       x-text="formatDateList(row.nextMeeting)"></a>
+                                    <span>
+                                        <a href="#"
+                                           @click.prevent="showMeetings(row); showMeeting(allMeetings.find(m => m.id === row.nextMeetingId))"
+                                           x-text="formatDateList(row.nextMeeting)"></a>
+                                        <a :href="makeIcs(row.orgName, row.nextMeeting, row.orgId, row.nextMeetingId, null)" download="termin.ics"
+                                           title="Termin herunterladen (.ics)"
+                                           style="margin-left:.35em; text-decoration:none; font-size:.85em">📅</a>
+                                    </span>
                                 </template>
-                                <template x-if="!row.isHeader && !row.nextMeetingId">
+                                <template x-if="!row.isHeader && !row.nextMeetingId && row.futureMeetingDates?.length">
+                                    <span>
+                                        <span x-text="formatDateList(row.futureMeetingDates[0])"></span>
+                                        <a :href="makeIcs(row.orgName, row.futureMeetingDates[0], row.orgId, null, null)" download="termin.ics"
+                                           title="Termin herunterladen (.ics)"
+                                           style="margin-left:.35em; text-decoration:none; font-size:.85em">📅</a>
+                                    </span>
+                                </template>
+                                <template x-if="!row.isHeader && !row.nextMeetingId && !row.futureMeetingDates?.length">
                                     <span>—</span>
                                 </template>
                             </td>
@@ -279,12 +317,24 @@
                 <table x-show="filteredMeetings.length > 0">
                     <thead><tr><th>Datum</th><th>Sitzung</th></tr></thead>
                     <tbody>
-                        <template x-for="mtg in filteredMeetings" :key="mtg.id">
+                        <template x-for="mtg in filteredMeetings" :key="mtg.id ?? ('f-' + mtg.start)">
                             <tr>
-                                <td style="white-space:nowrap" x-text="formatDateList(mtg.start)"></td>
+                                <td style="white-space:nowrap">
+                                    <span x-text="formatDateList(mtg.start)"></span>
+                                    <template x-if="mtg.start && mtg.start > new Date().toISOString()">
+                                        <a :href="makeIcs(mtg.name, mtg.start, mtg.orgId, mtg.id, mtg.items)" download="termin.ics"
+                                           title="Termin herunterladen (.ics)"
+                                           style="margin-left:.35em; text-decoration:none; font-size:.85em">📅</a>
+                                    </template>
+                                </td>
                                 <td>
-                                    <a href="#" @click.prevent="showMeeting(mtg)"
-                                       x-text="mtg.name"></a>
+                                    <template x-if="mtg.id !== null">
+                                        <a href="#" @click.prevent="showMeeting(mtg)"
+                                           x-text="mtg.name"></a>
+                                    </template>
+                                    <template x-if="mtg.id === null">
+                                        <span x-text="mtg.name + ' (geplant)'"></span>
+                                    </template>
                                     <small x-show="mtg.location">
                                         · <span x-text="mtg.location"></span>
                                     </small>
@@ -299,8 +349,13 @@
             <div x-show="orgTab === 'members'">
                 <p x-show="orgMembersLoading" aria-busy="true"></p>
                 <p x-show="!orgMembersLoading && orgMembers.length === 0">Keine Mitglieder gefunden.</p>
-                <table x-show="!orgMembersLoading && orgMembers.length > 0">
-                    <thead><tr><th>Name</th><th>Funktion</th><th>Fraktion/Gruppe</th></tr></thead>
+                <table x-show="!orgMembersLoading && orgMembers.length > 0"
+                       style="max-width:800px; width:100%; table-layout:fixed;">
+                    <thead><tr>
+                        <th style="width:200px;">Name</th>
+                        <th style="width:180px;">Funktion</th>
+                        <th>Fraktion/Gruppe</th>
+                    </tr></thead>
                     <tbody>
                         <template x-for="m in orgMembers" :key="m.personId">
                             <tr>
@@ -327,9 +382,14 @@
             <h2>Personen</h2>
             <p x-show="personsLoading" aria-busy="true"></p>
             <p x-show="!personsLoading && persons.length === 0">Keine Personen gefunden.</p>
-            <table x-show="!personsLoading && persons.length > 0">
+            <table x-show="!personsLoading && persons.length > 0"
+                   style="max-width:800px; width:100%; table-layout:fixed;">
                 <thead>
-                    <tr><th>Name</th><th>Fraktion/Gruppe</th><th>Gremien</th></tr>
+                    <tr>
+                        <th style="width:200px;">Name</th>
+                        <th style="width:200px;">Fraktion/Gruppe</th>
+                        <th>Gremien</th>
+                    </tr>
                 </thead>
                 <tbody>
                     <template x-for="p in persons" :key="p.id">
@@ -362,20 +422,79 @@
         </section>
     </template>
 
+    <!-- Admin view -->
+    <template x-if="view === 'admin' && !loading && !query.trim()">
+        <section>
+            <h2>Zuletzt gescraped
+                <small x-show="adminItems.length" style="font-weight:400; color:var(--pico-muted-color);"
+                       x-text="'(' + adminItems.length + ')'"></small>
+                <button style="margin-left:1em; font-size:0.7em; padding:0.2em 0.6em;"
+                        @click="adminLoaded=false; goAdmin()">↺</button>
+            </h2>
+            <p x-show="adminLoading" aria-busy="true"></p>
+            <table x-show="!adminLoading && adminItems.length > 0"
+                   style="width:100%; table-layout:fixed;">
+                <thead>
+                    <tr>
+                        <th style="width:10em;">Zeitpunkt</th>
+                        <th style="width:4em;">Typ</th>
+                        <th style="width:12em;">Gremium</th>
+                        <th style="width:7em;">Sitzung</th>
+                        <th style="width:7.5em;"></th>
+                        <th>Betreff</th>
+                        <th style="width:7em;">Beschluss</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="item in adminItems" :key="item.id">
+                        <tr>
+                            <td style="white-space:nowrap; font-size:0.78em; color:var(--pico-muted-color);"
+                                x-text="new Date(item.scrapedAt).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})"></td>
+                            <td style="font-size:0.75em; white-space:nowrap;">
+                                <span :style="'padding:0.15em 0.4em; border-radius:3px; background:' + (item.syncType==='to020' ? '#3a5a8a' : item.syncType==='to010' ? '#2d6a4f' : '#7b4f9e') + '; color:#fff;'"
+                                      x-text="item.syncType"></span>
+                            </td>
+                            <td style="font-size:0.85em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                                x-text="item.orgName || '—'"></td>
+                            <td style="white-space:nowrap;">
+                                <template x-if="item.meetingId">
+                                    <a href="#" @click.prevent="openAdminMeeting(item)"
+                                       x-text="item.meetingStart ? formatDateShort(item.meetingStart) : item.meetingId"></a>
+                                </template>
+                                <template x-if="!item.meetingId"><span style="color:var(--pico-muted-color);">—</span></template>
+                            </td>
+                            <td style="white-space:nowrap; font-size:0.85em;" x-text="item.number || '—'"></td>
+                            <td style="font-size:0.85em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                                x-text="item.name"></td>
+                            <td>
+                                <template x-if="item.result">
+                                    <span :class="'result-badge result-' + item.result"
+                                          x-text="resultLabel(item.result)"></span>
+                                </template>
+                                <template x-if="!item.result"><span style="color:var(--pico-muted-color);">—</span></template>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </section>
+    </template>
+
     <!-- Meeting detail (possibly split layout) -->
     <template x-if="view === 'meeting' && !loading && !query.trim()">
         <div :class="wide ? 'split-layout' : ''">
 
             <!-- Agenda content -->
-            <section :class="wide ? 'split-content' : ''">
-                <hgroup>
-                    <h2 style="display:flex; align-items:center; gap:0.4em;">
+            <section :class="wide ? 'split-content' : ''"
+                     :style="wide ? 'width:' + agendaWidth + 'px' : ''">
+                <hgroup style="margin-bottom:0.35rem;">
+                    <h2 style="display:flex; align-items:center; gap:0.4em; margin-bottom:0.1rem;">
                         <a :href="(municipality?.allrisBaseUrl || '') + '/to010?SILFDNR=' + meeting.id"
                            target="_blank" rel="noopener" x-text="meeting.name"></a>
                         <a :href="'/md/sitzungen/' + meeting.id" target="_blank" rel="noopener"
                            title="Markdown-Ansicht" class="md-badge">MD</a>
                     </h2>
-                    <p>
+                    <p style="margin:0; font-size:0.9em;">
                         <span x-text="formatDate(meeting.start)"></span>
                         <template x-if="meeting.location">
                             <span> · <span x-text="meeting.location"></span></span>
@@ -383,22 +502,29 @@
                     </p>
                 </hgroup>
 
-                <div x-show="meeting.files && meeting.files.length > 0" class="files" style="margin-bottom:1rem;">
-                    <template x-for="f in meeting.files" :key="f.id">
-                        <template x-if="wide">
-                            <button class="outline" style="font-size:0.8em;"
-                                    @click="openPdf(f)" x-text="f.name"></button>
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.4rem; flex-wrap:wrap; gap:0.3rem;">
+                    <div class="files">
+                        <template x-for="f in (meeting.files || [])" :key="f.id">
+                            <template x-if="wide">
+                                <button class="outline" style="font-size:0.75em; padding:0.15em 0.5em;"
+                                        @click="openPdf(f)" x-text="f.name"></button>
+                            </template>
+                            <template x-if="!wide">
+                                <a :href="'/ui/proxy/file/' + f.id" target="_blank"
+                                   style="font-size:0.75em;" x-text="f.name"></a>
+                            </template>
                         </template>
-                        <template x-if="!wide">
-                            <a :href="'/ui/proxy/file/' + f.id" target="_blank"
-                               style="font-size:0.8em;" x-text="f.name"></a>
-                        </template>
-                    </template>
+                    </div>
+                    <label style="font-size:0.82em; white-space:nowrap; cursor:pointer; margin:0; user-select:none;">
+                        <input type="checkbox" x-model="showDetails" role="checkbox">
+                        mit Details
+                    </label>
                 </div>
 
                 <p x-show="meeting.items.length === 0">Keine Tagesordnungspunkte vorhanden.</p>
 
-                <table x-show="meeting.items.length > 0" style="table-layout:fixed; width:100%;">
+                <div class="meeting-scroll-wrap" x-show="meeting.items.length > 0">
+                <table style="table-layout:fixed; width:100%;">
                     <thead>
                         <tr>
                             <th style="width:5.25em; white-space:nowrap;">TOP</th>
@@ -414,24 +540,18 @@
                                     <a :href="(municipality?.allrisBaseUrl || '') + '/to020?TOLFDNR=' + item.id"
                                        target="_blank" rel="noopener" x-text="item.name"></a>
                                     <small x-show="!item.public"> (nichtöffentlich)</small>
-                                    <template x-if="item.result || item.resolutionText || item.voteText || item.wordContribution">
+                                    <template x-if="item.result || (showDetails && (item.resolutionText || item.voteText || item.wordContribution))">
                                         <div class="top-detail">
                                             <template x-if="item.result">
                                                 <span :class="'result-badge result-' + item.result"
                                                       x-text="resultLabel(item.result)"></span>
                                             </template>
-                                            <template x-if="item.voteText">
-                                                <div class="top-section"
-                                                     x-html="item.voteText.split(/\n\n+/).map(p => '<p>' + p.replace(/\n/g,'<br>') + '</p>').join('')"></div>
-                                            </template>
-                                            <template x-if="item.resolutionText">
-                                                <div class="top-section"
-                                                     x-html="item.resolutionText.split(/\n\n+/).map(p => '<p>' + p.replace(/\n/g,'<br>') + '</p>').join('')"></div>
-                                            </template>
-                                            <template x-if="item.wordContribution">
-                                                <div class="top-section"
-                                                     x-html="item.wordContribution.split(/\n\n+/).map(p => '<p>' + p.replace(/\n/g,'<br>') + '</p>').join('')"></div>
-                                            </template>
+                                            <div x-show="showDetails && item.voteText" class="top-section"
+                                                 x-html="(item.voteText||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
+                                            <div x-show="showDetails && item.resolutionText" class="top-section"
+                                                 x-html="(item.resolutionText||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
+                                            <div x-show="showDetails && item.wordContribution" class="top-section"
+                                                 x-html="(item.wordContribution||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
                                         </div>
                                     </template>
                                 </td>
@@ -462,6 +582,7 @@
                         </template>
                     </tbody>
                 </table>
+                </div><!-- meeting-scroll-wrap -->
             </section>
 
             <!-- Drag handle (wide only) -->
@@ -470,8 +591,7 @@
                  title="Breite anpassen"></div>
 
             <!-- PDF panel (wide only) -->
-            <aside x-show="wide" class="split-pdf"
-                   :style="wide ? `width:${pdfWidth}px` : ''">
+            <aside x-show="wide" class="split-pdf">
                 <div x-show="pdfLoading" class="pdf-loading-overlay">
                     <div class="pdf-spinner"></div>
                 </div>
@@ -496,12 +616,6 @@
     </template>
 </main>
 
-<footer class="container-fluid">
-    <small>
-        <a href="/oparl/v1.1" target="_blank">OParl API</a> ·
-        <a href="/docs" target="_blank">API Docs</a>
-    </small>
-</footer>
 
 <script>
 function app() {
@@ -530,14 +644,19 @@ function app() {
         allLoaded: false,
         loadingAll: false,
 
+        showDetails: false,
         wide: window.innerWidth > 1024,
-        pdfWidth: Math.round(Math.max(300, window.innerWidth * 0.55)),
+        agendaWidth: 700,
         activePdfUrl: null,
         activePdfId: null,
         activePdfSourceUrl: null,
         activePdfSourceLabel: null,
         pdfLoading: false,
         municipality: null,
+
+        adminItems: [],
+        adminLoading: false,
+        adminLoaded: false,
 
         async init() {
             window.addEventListener('resize', () => {
@@ -546,12 +665,14 @@ function app() {
 
             this.loading = true;
             try {
-                const [bodyRes, muniRes] = await Promise.all([
+                const [bodyRes, muniRes, orgsRes] = await Promise.all([
                     fetch('/oparl/v1.1/body/1'),
                     fetch('/ui/municipality'),
+                    fetch('/ui/orgs'),
                 ]);
                 this.body = await bodyRes.json();
                 this.municipality = await muniRes.json();
+                const orgsData = await orgsRes.json();
                 document.title = this.body.systemName || 'Bürgerinformation';
                 if (this.municipality?.wappenUrl) {
                     const link = document.querySelector("link[rel~='icon']") || document.createElement('link');
@@ -559,32 +680,50 @@ function app() {
                     link.href = this.municipality.wappenUrl;
                     document.head.appendChild(link);
                 }
+                this._buildOrgTable(orgsData.orgs, []);
             } finally {
                 this.loading = false;
             }
 
+            // Load full meeting index in background for search + last/next dates
             this.loadingAll = true;
-            Promise.all([
-                fetch('/ui/all').then(r => r.json()),
-                fetch('/ui/orgs').then(r => r.json()),
-            ]).then(([allData, orgsData]) => {
+            fetch('/ui/all').then(r => r.json()).then(allData => {
                 this.allMeetings = allData.meetings;
+                this._buildOrgTable(null, allData.meetings);
+                this.allLoaded = true;
+                this.loadingAll = false;
+                // If user already navigated to a meeting list, refresh it now
+                if (this.view === 'meetings' && this.selectedOrg) {
+                    this.showMeetings(this.selectedOrg);
+                }
+            });
+        },
 
-                // Build org map from /ui/orgs (includes orgs without meetings)
-                const now = new Date().toISOString();
-                const orgMap = new Map();
-                for (const o of orgsData.orgs) {
-                    orgMap.set(o.id, {
+        _buildOrgTable(orgsData, meetings) {
+            const now = new Date().toISOString();
+            const sortKey = n => n.replace(/^ausschuss\s+für\s+/i, '');
+            const typeOrder = ['Rat', 'Ausschuss', 'Fraktion/Gruppe', 'Mitgliedschaften'];
+
+            // (Re-)initialise the map when orgs data is provided
+            if (orgsData) {
+                this._orgMap = new Map();
+                for (const o of orgsData) {
+                    const fmd = o.futureMeetingDates || [];
+                    this._orgMap.set(o.id, {
                         orgId: o.id, orgName: o.name, orgType: o.type,
                         lastMeeting: null, lastMeetingId: null,
                         nextMeeting: null, nextMeetingId: null,
+                        nextMeetingDate: fmd[0] || o.nextMeetingDate || null,
+                        futureMeetingDates: fmd,
                     });
                 }
+            }
 
-                // Overlay last/next meeting from /ui/all
-                for (const m of allData.meetings) {
-                    if (!m.orgId || !orgMap.has(m.orgId)) continue;
-                    const org = orgMap.get(m.orgId);
+            // Overlay last/next meeting info when meetings are available
+            if (meetings && meetings.length > 0) {
+                for (const m of meetings) {
+                    if (!m.orgId || !this._orgMap.has(m.orgId)) continue;
+                    const org = this._orgMap.get(m.orgId);
                     if (m.start) {
                         if (m.start < now) {
                             if (!org.lastMeeting || m.start > org.lastMeeting) {
@@ -597,41 +736,33 @@ function app() {
                         }
                     }
                 }
+            }
 
-                // Sort within each type group
-                const sortKey = n => n.replace(/^ausschuss\s+für\s+/i, '');
-                this.orgs = [...orgMap.values()].sort((a, b) =>
-                    sortKey(a.orgName).localeCompare(sortKey(b.orgName), 'de'));
+            this.orgs = [...this._orgMap.values()].sort((a, b) =>
+                sortKey(a.orgName).localeCompare(sortKey(b.orgName), 'de'));
 
-                // Group by Organisationstyp preserving gr010 order
-                const typeOrder = ['Rat', 'Ausschuss', 'Fraktion/Gruppe', 'Mitgliedschaften'];
-                const byType = new Map();
-                for (const org of this.orgs) {
-                    const t = org.orgType || 'Sonstige';
-                    if (!byType.has(t)) byType.set(t, []);
-                    byType.get(t).push(org);
-                }
-                this.orgTypes = typeOrder
-                    .filter(t => byType.has(t))
-                    .map(t => ({ type: t, orgs: byType.get(t) }));
-                // Append any unexpected types not in typeOrder
-                for (const [t, orgs] of byType) {
-                    if (!typeOrder.includes(t)) this.orgTypes.push({ type: t, orgs });
-                }
-
-                this.allLoaded = true;
-                this.loadingAll = false;
-            });
+            const byType = new Map();
+            for (const org of this.orgs) {
+                const t = org.orgType || 'Sonstige';
+                if (!byType.has(t)) byType.set(t, []);
+                byType.get(t).push(org);
+            }
+            this.orgTypes = typeOrder
+                .filter(t => byType.has(t))
+                .map(t => ({ type: t, orgs: byType.get(t) }));
+            for (const [t, orgs] of byType) {
+                if (!typeOrder.includes(t)) this.orgTypes.push({ type: t, orgs });
+            }
         },
 
         startResize(e) {
             const startX = e.clientX;
-            const startW = this.pdfWidth;
+            const startW = this.agendaWidth;
             document.body.style.cursor = 'col-resize';
             document.body.style.userSelect = 'none';
             const onMove = (ev) => {
-                const delta = startX - ev.clientX;
-                this.pdfWidth = Math.max(180, Math.min(window.innerWidth - 250, startW + delta));
+                const delta = ev.clientX - startX;
+                this.agendaWidth = Math.max(300, Math.min(window.innerWidth - 400, startW + delta));
             };
             const onUp = () => {
                 document.body.style.cursor = '';
@@ -650,8 +781,12 @@ function app() {
             this.activePdfId = null;
             this.view = 'meetings';
             this.orgMembers = [];
-            this.meetings = this.allMeetings
-                .filter(m => m.orgId === org.orgId)
+            const realMeetings = this.allMeetings.filter(m => m.orgId === org.orgId);
+            const allStarts = new Set(realMeetings.map(m => m.start ? m.start.slice(0, 16) : null));
+            const synthetic = (org.futureMeetingDates || [])
+                .filter(iso => !allStarts.has(iso.slice(0, 16)))
+                .map(iso => ({ id: null, orgId: org.orgId, start: iso, name: org.orgName, items: [] }));
+            this.meetings = [...synthetic, ...realMeetings]
                 .sort((a, b) => (b.start || '').localeCompare(a.start || ''));
             if (this.meetings.length === 0) {
                 this.loadOrgMembers();
@@ -704,6 +839,7 @@ function app() {
         get flatOrgRows() {
             const rows = [];
             for (const grp of this.orgTypes) {
+                if (grp.type === 'Mitgliedschaften') continue;
                 rows.push({ isHeader: true, type: grp.type });
                 for (const org of grp.orgs) rows.push({ isHeader: false, ...org });
             }
@@ -749,10 +885,12 @@ function app() {
         onSearch() {
             const q = this.query.trim().toLowerCase();
             if (!q) { this.searchResults = []; return; }
+            const terms = q.split(/\s+/);
+            const matches = s => terms.every(t => s.includes(t));
 
             const results = [];
             for (const mtg of this.allMeetings) {
-                if (mtg.name.toLowerCase().includes(q)) {
+                if (matches(mtg.name.toLowerCase())) {
                     results.push({
                         key: `mtg-${mtg.id}`,
                         type: 'meeting',
@@ -765,10 +903,8 @@ function app() {
                     });
                 }
                 for (const item of mtg.items) {
-                    if (
-                        item.name.toLowerCase().includes(q) ||
-                        (item.paperRef && item.paperRef.toLowerCase().includes(q))
-                    ) {
+                    const hay = item.name.toLowerCase() + ' ' + (item.paperRef || '').toLowerCase();
+                    if (matches(hay)) {
                         results.push({
                             key: `ai-${item.id}`,
                             type: 'item',
@@ -810,6 +946,37 @@ function app() {
             this.orgMembers = [];
         },
 
+        async goAdmin() {
+            this.view = 'admin';
+            this.selectedOrg = null;
+            this.meeting = null;
+            this.activePdfUrl = null; this.activePdfSourceUrl = null; this.activePdfSourceLabel = null;
+            this.activePdfId = null;
+            if (this.adminLoaded) return;
+            this.adminLoading = true;
+            try {
+                const r = await fetch('/ui/admin/recent');
+                const data = await r.json();
+                this.adminItems = data.items;
+                this.adminLoaded = true;
+            } finally {
+                this.adminLoading = false;
+            }
+        },
+
+        async openAdminMeeting(item) {
+            const org = this.orgs.find(o => o.orgId === item.orgId);
+            if (org) {
+                this.showMeetings(org);
+            } else {
+                this.selectedOrg = { orgId: item.orgId, orgName: item.orgName };
+                this.meetings = this.allMeetings
+                    .filter(m => m.orgId === item.orgId)
+                    .sort((a, b) => (b.start || '').localeCompare(a.start || ''));
+            }
+            await this.showMeeting({ id: item.meetingId });
+        },
+
         goMeetings() {
             this.view = 'meetings';
             this.meeting = null;
@@ -819,13 +986,48 @@ function app() {
 
         highlight(text) {
             if (!text || !this.query.trim()) return text;
-            const q = this.query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            return text.replace(new RegExp(q, 'gi'), m => `<mark>${m}</mark>`);
+            const terms = this.query.trim().split(/\s+/)
+                .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            let out = text;
+            for (const t of terms)
+                out = out.replace(new RegExp(t, 'gi'), m => `<mark>${m}</mark>`);
+            return out;
         },
 
         resultLabel(result) {
             return {ACCEPTED: 'beschlossen', REJECTED: 'abgelehnt',
                     DEFERRED: 'vertagt', NODECISION: 'zur Kenntnis'}[result] || result;
+        },
+
+        makeIcs(name, isoStart, orgId, meetingId, items) {
+            // Date-only strings (YYYY-MM-DD) are parsed as UTC by JS → shift to local time
+            const normalized = isoStart && !isoStart.includes('T') ? isoStart + 'T00:00:00' : isoStart;
+            const d = new Date(normalized);
+            const pad = n => String(n).padStart(2, '0');
+            const fmt = x => `${x.getFullYear()}${pad(x.getMonth()+1)}${pad(x.getDate())}T${pad(x.getHours())}${pad(x.getMinutes())}00`;
+            const end = new Date(d.getTime() + 2 * 3600 * 1000);
+            const esc = s => (s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+            const base = this.municipality?.allrisBaseUrl || '';
+
+            const descParts = [];
+            if (meetingId && base) descParts.push(`Sitzung: ${base}/to010?SILFDNR=${meetingId}`);
+            if (orgId && base)     descParts.push(`Gremium: ${base}/si018?GRLFDNR=${orgId}`);
+            if (items?.length) {
+                descParts.push('', 'Tagesordnung:');
+                for (const it of items)
+                    descParts.push(`${it.number ? it.number + ' ' : ''}${it.name}`);
+            }
+
+            const lines = [
+                'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//oparl-bridge//DE',
+                'BEGIN:VEVENT',
+                `DTSTART:${fmt(d)}`, `DTEND:${fmt(end)}`,
+                `SUMMARY:${esc(name)}`,
+            ];
+            if (descParts.length) lines.push(`DESCRIPTION:${esc(descParts.join('\n'))}`);
+            if (meetingId && base) lines.push(`URL:${base}/to010?SILFDNR=${meetingId}`);
+            lines.push('END:VEVENT', 'END:VCALENDAR');
+            return 'data:text/calendar;charset=utf-8,' + encodeURIComponent(lines.join('\r\n'));
         },
 
         formatDate(iso) {

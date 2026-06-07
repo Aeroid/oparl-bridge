@@ -22,7 +22,7 @@ ALLRIS (Wicket/Ajax)
 meine-stadt-transparent  ← (or any OParl-compatible frontend or LLM crawler)
 ```
 
-PDFs are **not** fetched or stored. Files carry an `accessUrl` back to ALLRIS; the browser UI proxies PDFs on demand via Playwright route interception.
+PDFs are **not** fetched or stored. Files carry an `accessUrl` back to ALLRIS; the browser UI proxies PDFs on demand via httpx (session cookie + Referer, <1 s).
 
 ## Supported ALLRIS objects → OParl mapping
 
@@ -30,8 +30,8 @@ PDFs are **not** fetched or stored. Files carry an `accessUrl` back to ALLRIS; t
 |--------|-------|
 | Gremium (gr010) | `oparl:Organization` |
 | Sitzung (si018) | `oparl:Meeting` |
-| Sitzungsdetail + Tagesordnung (to010) | `oparl:Meeting` (location, agenda) |
-| Tagesordnungspunkt + Beschluss/Wortbeitrag | `oparl:AgendaItem` (result, resolutionText, auxiliaryFile) |
+| Sitzungsdetail + Tagesordnung (to010) | `oparl:Meeting` (location, agenda items) |
+| Tagesordnungspunkt-Detail (to020) | `oparl:AgendaItem` (result, resolutionText, voteText, wordContribution, auxiliaryFile) |
 | Vorlage/Drucksache (vo020) | `oparl:Paper` |
 | Dokument (Wicket resource URL) | `oparl:File` (accessUrl only) |
 
@@ -73,13 +73,14 @@ OPARL_FAVICON_B64=data:image/x-icon;base64,...  # optional: base64-encoded favic
 ### 1. Sync data from ALLRIS
 
 ```bash
-# Full sync: committees → meetings → meeting details (location, agenda) → papers/files
+# Full sync: committees → meetings → meeting details → papers/files → agenda item details
 uv run oparl-bridge-sync sync
 
 # Individual steps
-uv run oparl-bridge-sync sync-orgs      # committees only
-uv run oparl-bridge-sync sync-papers    # papers/files only (meeting details must exist)
-uv run oparl-bridge-sync reset-details  # force re-scrape all meeting detail pages
+uv run oparl-bridge-sync sync-orgs          # committees only
+uv run oparl-bridge-sync sync-papers        # papers/files only (meeting details must exist)
+uv run oparl-bridge-sync sync-item-details  # Beschlüsse, Wortbeiträge, Anlagen from to020
+uv run oparl-bridge-sync reset-details      # force re-scrape all meeting detail pages
 ```
 
 ### 2. Start the server
@@ -103,11 +104,13 @@ The SPA at `/` provides a navigable view of the scraped data:
 
 - **Gremien** → **Sitzungsliste** → **Tagesordnung** with agenda items, Vorlagen, and PDFs
 - **Search**: live full-text search across all meetings, agenda items, and Vorlage references — client-side, no server requests per keystroke
-- **Beschlüsse**: result badge (beschlossen / abgelehnt / vertagt / zur Kenntnis), Abstimmungsergebnis, Beschlusstext, Wortbeiträge
+- **Beschlüsse**: result badge (beschlossen / abgelehnt / vertagt / zur Kenntnis) always visible; Abstimmungsergebnis, Beschlusstext, and Wortbeiträge toggled via "mit Details" checkbox
 - **Wide screens (>1500 px)**: split-view PDF iframe panel; narrower screens open PDFs in a new tab
+- **Mobile**: native scrolling preserved (height/overflow CSS scoped to `min-width: 1025px`)
+- **Admin view**: `/ui/admin/recent` lists the 100 most recently scraped items with type badges (to010/to020/vo020), timestamps, and meeting links
 - **MD badge**: every detail view links to its Markdown equivalent
 
-PDFs are served via `/ui/proxy/file/{id}`. The proxy visits the source page (vo020/to010/to020) via httpx to obtain a session cookie and Referer URL, then fetches the Wicket resource URL directly — typically under 1 s.
+PDFs are served via `/ui/proxy/file/{id}`. The proxy visits the source page via httpx to obtain a session cookie and Referer URL, then fetches the Wicket resource URL directly — typically under 1 s.
 
 ## Markdown endpoints (LLM-crawler-friendly)
 
@@ -178,9 +181,10 @@ uv run python scripts/validate_oparl.py
 
 - **One deployment per ALLRIS instance.** Body ID is always `/oparl/v1.1/body/1`.
 - **ALLRIS IDs are preserved** as OParl numeric IDs (GRLFDNR → Organization.id, etc.).
-- **Playwright is required** — ALLRIS uses Apache Wicket with Ajax; static HTTP returns 403.
-- **Session warmup**: scraper must visit `gr010` before detail pages are accessible.
-- **Rate limiting**: configurable delay between every `page.goto()` call (`OPARL_SCRAPER_DELAY_MS`).
+- **Playwright for Wicket-Ajax pages** (to010, si018); **httpx for detail pages** (to020, vo020, PDF proxy).
+- **Session warmup**: scraper must visit `gr010` before detail pages are accessible. `prepare_for_to020(meeting_id)` visits to010 via httpx before scraping any to020 items for that meeting.
+- **nichtöffentlich items** (N* prefix) always return 302 from to020 and are skipped without a request.
+- **Rate limiting**: configurable delay before every Playwright `page.goto()` and every httpx request (`OPARL_SCRAPER_DELAY_MS`).
 - **Incremental sync**: `Meeting.detail_scraped_at` tracks scraped meetings; only new ones are re-scraped.
 - **SQLite migrations**: new columns are added via `ALTER TABLE` in `_migrate()` — no Alembic.
 - **Wikidata cache**: single JSON file (`wikidata_cache.json`, gitignored), refreshed in background if stale.

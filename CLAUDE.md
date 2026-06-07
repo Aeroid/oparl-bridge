@@ -40,15 +40,18 @@ Do not hardcode this URL anywhere in the source — it belongs in `.env` only.
 | `/allris/si010` | Meeting calendar (all committees) | ✅ |
 | `/allris/si018?GRLFDNR=<id>` | Meetings for one committee — columns: Datum \| Uhrzeit \| Sitzung \| Rang | ✅ |
 | `/allris/to010?SILFDNR=<id>&refresh=false` | Meeting detail + agenda — dt labels: Betreff, Datum, Uhrzeit, Raum, Ort; each TOP has a +/- expand button (Wicket Ajax) that reveals Beschluss, Abstimmungsergebnis, Anlagen/Wortbeiträge | ✅ |
-| `/allris/to020?TOLFDNR=<id>` | Agenda item detail | ❌ |
+| `/allris/to020?TOLFDNR=<id>` | Agenda item detail — dt labels: Betreff; sections: Beschlussart (`#toBeschlussart`), Beschlusstext, Abstimmungsergebnis, Wortprotokoll (all inside `.compFull .docPart`); Anlagen via `a.attlink.pdf[href*=attachment-link]` | ✅ |
 | `/allris/vo020?VOLFDNR=<id>` | Paper/Vorlage detail — dt labels: Betreff, Vorlageart; PDFs via `a[href*='.pdf']` | ✅ |
 | `/allris/doc/<id>` | PDF documents (static) | ❌ |
 
 **Note:** The meeting detail page is `to010`, not `si020`. Direct links on si018 point to `to010`.
 
-ALLRIS uses Apache Wicket — pages require a browser session (JS/cookies).
-WebFetch/curl will get 403 or redirect. Always use Playwright.
-Session must be warmed up first (e.g. via gr010) before detail pages are accessible.
+**Session notes:**
+- to010, to020, vo020, si018 all require a warmed-up ALLRIS session (httpx with cookie jar).
+- Call `_http_get("/gr010")` (or equivalent) before any detail page — otherwise networkidle hangs.
+- to020 additionally requires a prior to010 visit **in the same httpx session** to establish Wicket navigation state. Use `prepare_for_to020(meeting_id)` before scraping to020 items for a meeting.
+- **nichtöffentlich items** (number starts with `N`, or name contains "nichtöffentlich") always return 302 from to020 — skip them without making a request.
+- WebFetch/curl will get 403 or redirect. Scraper uses Playwright for Wicket-Ajax pages (to010, si018) and httpx for static detail pages (to020, vo020, PDF proxy).
 
 ## OParl objects (implementation priority)
 1. `oparl:System` ✅
@@ -83,10 +86,11 @@ uv run playwright install chromium
 uv run oparl-bridge
 
 # Sync data from ALLRIS
-uv run oparl-bridge-sync sync-orgs     # committees only
-uv run oparl-bridge-sync sync          # full sync (orgs → meetings → details → papers)
-uv run oparl-bridge-sync sync-papers   # papers/files only (details must already be scraped)
-uv run oparl-bridge-sync reset-details # reset detail_scraped_at → force re-scrape all meeting details
+uv run oparl-bridge-sync sync-orgs       # committees only
+uv run oparl-bridge-sync sync            # full sync (orgs → meetings → details → papers → item details)
+uv run oparl-bridge-sync sync-papers     # papers/files only (details must already be scraped)
+uv run oparl-bridge-sync sync-item-details  # to020 scraping (Beschluss, Wortbeitrag, Anlagen)
+uv run oparl-bridge-sync reset-details   # reset detail_scraped_at → force re-scrape all meeting details
 
 # Validate OParl JSON schema compliance
 uv run python scripts/validate_oparl.py
@@ -104,7 +108,8 @@ uv run --extra dev ruff check src/
 | `GET /` | Serves `static/index.html` (Alpine.js SPA) |
 | `GET /ui/all` | All meetings + agenda items in one response — used for client-side search index |
 | `GET /ui/meeting/{id}` | Meeting with inlined agenda items, papers, and file URLs |
-| `GET /ui/proxy/file/{id}` | Fetches PDF from ALLRIS via Playwright route interception |
+| `GET /ui/proxy/file/{id}` | Fetches PDF from ALLRIS via httpx (session cookie + Referer) |
+| `GET /ui/admin/recent` | Top 100 most recent scrape events across all sync types (to010/to020/vo020), with type badges and meeting links |
 
 ## Markdown endpoints (LLM-crawler-friendly)
 | Endpoint | Description |
@@ -137,19 +142,23 @@ Used in: OParl `body.ags`, `body.equivalent`, `/md/` index page, `llms.txt`.
 - **Pydantic v2**: All OParl objects validated via Pydantic; use `model_dump(by_alias=True)` for JSON output
 - **SQLAlchemy 2.0 style**: Use `Mapped[]` type annotations, not legacy `Column()`
 - **URL derivation**: `OParlMapper` is instantiated per-request via FastAPI dependency injection, using `request.base_url` so URLs in responses reflect the actual hostname/scheme
-- **Rate limiting**: `AllrisScraper._goto()` sleeps `OPARL_SCRAPER_DELAY_MS` before every `page.goto()` call
-- **Incremental sync**: `Meeting.detail_scraped_at` tracks whether to010 has been scraped. `sync_meeting_details` only scrapes meetings where this is NULL.
+- **Rate limiting**: `AllrisScraper._goto()` sleeps `OPARL_SCRAPER_DELAY_MS` before every `page.goto()` call; `_http_get()` sleeps the same delay before every httpx request.
+- **Incremental sync**: `Meeting.detail_scraped_at` tracks whether to010 has been scraped. `sync_meeting_details` only scrapes meetings where this is NULL. `AgendaItem.result_scraped_at` tracks whether to020 has been scraped; `sync_agenda_item_details` only scrapes items where this is NULL.
+- **to020 session grouping**: `sync_agenda_item_details` groups pending items by `meeting_id` and calls `prepare_for_to020(meeting_id)` once per group (visits to010 via httpx to prime Wicket navigation state) before scraping to020 for any item in that meeting.
+- **nichtöffentlich skip**: AgendaItems with `number` starting with `N` or `name` containing "nichtöffentlich" always return 302 from to020. Skip them instantly (set `result_scraped_at`, no HTTP request).
 - **Paper sync**: `sync_papers` collects distinct `paper_id` values from `AgendaItem` rows not yet in the `Paper` table, scrapes `vo020`, and stores `Paper` + `File` records.
 - **SQLite migrations**: `init_db()` calls `_migrate()` which uses `ALTER TABLE` to add new columns to existing DBs. No Alembic.
 - **dt-only parsing**: `_parse_meeting_detail` and `_parse_paper` query only `dt` elements, not `th`. The agenda table on to010 has a `th` named "Betreff" which would overwrite the correctly parsed meeting name.
 - **AgendaItem paper link**: `AgendaItem.paper_id` (VOLFDNR FK) and `paper_reference` (link text) are populated from to010 cells[4] during `sync_meeting_details`.
 - **PDF proxy**: Uses httpx — visit the source page (vo020/to010/to020) to obtain a JSESSIONID cookie and Referer URL, then GET the Wicket resource URL directly with `Referer` set. httpx handles the session cookie automatically. Latency: <1 s (was ~3–5 s with Playwright). Wicket resource URLs (`/allris/wicket/resource/org.apache.wicket.Application/doc*.pdf`) are stable across sessions; only the Referer check enforced by ALLRIS requires the source-page visit.
-- **AgendaItem attachments**: Clicking the Wicket `+` expand button per TOP during `scrape_meeting_detail` reveals Beschlusstext, Abstimmungsergebnis, Anlagen, and Wortbeiträge. `_derive_result` maps raw German text to OParl result enums.
+- **AgendaItem attachments (to010)**: Clicking the Wicket `+` expand button per TOP during `scrape_meeting_detail` reveals Beschlusstext, Abstimmungsergebnis, Anlagen, and Wortbeiträge. `_derive_result` maps raw German text to OParl result enums.
+- **AgendaItem details (to020)**: `_parse_to020_bs` extracts Beschlussart (`#toBeschlussart`), and for each `a[data-simpletooltip-text]` inside `.compFull`: Beschlusstext (tip contains "beschluss"), Abstimmungsergebnis (tip contains "abstimmung"), Wortprotokoll (tip contains "wortprotokoll"/"wortbeitrag") from `.docPart` divs. Anlagen via `a.attlink.pdf[href*=attachment-link]`.
 - **Sentinel URLs**: `allris://to020/{tolfdnr}/{index}` for Wicket download-only Anlagen. `_display_url()` converts to display URL; `displayLabel` carries filename.
 - **Wikidata cache**: JSON file, never in DB (avoids SQLite locking conflicts with sync process). `get_wikidata()` returns cached data instantly and fires background refresh via `asyncio.ensure_future` if stale.
 - **si018 pagination**: ALLRIS paginates at 25 meetings. Wicket `pageLink` callback URLs must be triggered via `page.evaluate()` + `dispatchEvent`, not `fill()`. Results deduplicated by SILFDNR.
 - **SPA search**: `/ui/all` fetched once in background. All filtering client-side (Alpine.js). No server requests per keystroke.
-- **Responsive split layout**: SPA detects `window.innerWidth > 1500`. PDF opens in split iframe above that, new tab below.
+- **Responsive split layout**: SPA detects `window.innerWidth > 1500`. PDF opens in split iframe above that, new tab below. Full-height flex stack (`html→body→main→split-layout`) — no pixel calc. Height/overflow CSS in `@media (min-width: 1025px)` to preserve native mobile scroll.
+- **`_parse_paper_bs` title fallback**: Falls back to `<title>` only if the title doesn't contain "ratsinformationssystem" (which is ALLRIS's generic page title when Betreff is absent).
 
 ## OParl spec
 https://dev.oparl.org/spezifikation/

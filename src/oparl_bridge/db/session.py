@@ -57,6 +57,15 @@ def _migrate(eng) -> None:
             conn.execute(text("ALTER TABLE agenda_items ADD COLUMN word_contribution TEXT"))
             conn.commit()
 
+        org_cols = {c["name"] for c in inspector.get_columns("organizations")}
+        if "next_meeting_date" not in org_cols:
+            conn.execute(text("ALTER TABLE organizations ADD COLUMN next_meeting_date VARCHAR(20)"))
+            conn.commit()
+        org_cols2 = {c["name"] for c in inspector.get_columns("organizations")}
+        if "future_meeting_dates" not in org_cols2:
+            conn.execute(text("ALTER TABLE organizations ADD COLUMN future_meeting_dates TEXT"))
+            conn.commit()
+
 
 def get_db():
     db = SessionLocal()

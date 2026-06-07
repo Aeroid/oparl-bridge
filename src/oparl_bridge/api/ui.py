@@ -135,13 +135,20 @@ async def ui_meeting(meeting_id: int, db: Session = Depends(get_db)):
 @router.get("/orgs")
 async def ui_orgs(db: Session = Depends(get_db)):
     """All organizations with type — for the org list incl. orgs without meetings."""
+    import json
     orgs = db.query(Organization).order_by(Organization.name).all()
-    return {
-        "orgs": [
-            {"id": o.id, "name": o.name, "type": o.organization_type}
-            for o in orgs
-        ]
-    }
+    result = []
+    for o in orgs:
+        future = json.loads(o.future_meeting_dates) if o.future_meeting_dates else []
+        # Fallback: use next_meeting_date (from gr010) if si018 hasn't populated future yet
+        if not future and o.next_meeting_date:
+            future = [o.next_meeting_date]
+        result.append({
+            "id": o.id, "name": o.name, "type": o.organization_type,
+            "nextMeetingDate": future[0][:10] if future else None,
+            "futureMeetingDates": future,
+        })
+    return {"orgs": result}
 
 
 @router.get("/persons")
@@ -287,6 +294,87 @@ async def ui_municipality():
     return _municipality_cache
 
 
+@router.get("/admin/recent")
+async def ui_admin_recent(db: Session = Depends(get_db)):
+    """Last 100 scrape events across all sync types (to010, to020, vo020)."""
+    from oparl_bridge.db.models import AgendaItem as AI, Paper
+
+    items: list[dict] = []
+
+    # to020 — AgendaItem details
+    for ai, mtg, org in (
+        db.query(AI, Meeting, Organization)
+        .join(Meeting, AI.meeting_id == Meeting.id, isouter=True)
+        .join(Organization, Meeting.organization_id == Organization.id, isouter=True)
+        .filter(AI.result_scraped_at.isnot(None))
+        .order_by(AI.result_scraped_at.desc())
+        .limit(100)
+        .all()
+    ):
+        items.append({
+            "syncType": "to020",
+            "id": ai.id,
+            "number": ai.number,
+            "name": ai.name,
+            "meetingId": ai.meeting_id,
+            "meetingStart": mtg.start.isoformat() + "Z" if mtg and mtg.start else None,
+            "orgId": mtg.organization_id if mtg else None,
+            "orgName": org.name if org else None,
+            "result": ai.result,
+            "scrapedAt": ai.result_scraped_at.isoformat() + "Z",
+        })
+
+    # to010 — Meeting details
+    for mtg, org in (
+        db.query(Meeting, Organization)
+        .join(Organization, Meeting.organization_id == Organization.id, isouter=True)
+        .filter(Meeting.detail_scraped_at.isnot(None))
+        .order_by(Meeting.detail_scraped_at.desc())
+        .limit(100)
+        .all()
+    ):
+        items.append({
+            "syncType": "to010",
+            "id": f"m{mtg.id}",
+            "number": None,
+            "name": mtg.name,
+            "meetingId": mtg.id,
+            "meetingStart": mtg.start.isoformat() + "Z" if mtg.start else None,
+            "orgId": mtg.organization_id,
+            "orgName": org.name if org else None,
+            "result": None,
+            "scrapedAt": mtg.detail_scraped_at.isoformat() + "Z",
+        })
+
+    # vo020 — Papers
+    for paper, mtg, org in (
+        db.query(Paper, Meeting, Organization)
+        .join(AI, AI.paper_id == Paper.id, isouter=True)
+        .join(Meeting, AI.meeting_id == Meeting.id, isouter=True)
+        .join(Organization, Meeting.organization_id == Organization.id, isouter=True)
+        .filter(Paper.scraped_at.isnot(None))
+        .order_by(Paper.scraped_at.desc())
+        .distinct(Paper.id)
+        .limit(100)
+        .all()
+    ):
+        items.append({
+            "syncType": "vo020",
+            "id": f"p{paper.id}",
+            "number": paper.reference,
+            "name": paper.name,
+            "meetingId": mtg.id if mtg else None,
+            "meetingStart": mtg.start.isoformat() + "Z" if mtg and mtg.start else None,
+            "orgId": mtg.organization_id if mtg else None,
+            "orgName": org.name if org else None,
+            "result": None,
+            "scrapedAt": paper.scraped_at.isoformat() + "Z",
+        })
+
+    items.sort(key=lambda x: x["scrapedAt"], reverse=True)
+    return {"items": items[:100]}
+
+
 @router.get("/proxy/file/{file_id}")
 async def proxy_file(file_id: int, db: Session = Depends(get_db)):
     """Fetch a PDF from ALLRIS via httpx.
@@ -343,11 +431,11 @@ async def proxy_file(file_id: int, db: Session = Depends(get_db)):
             referer = str(resp_source.url)
 
             if pdf_url is None:
-                # Sentinel case: extract PDF links from to020 page.
-                # Scraper selects a.attlink.pdf where href contains "anlagenHeader".
+                # Sentinel case: extract canonical attachment-link hrefs from to020 page.
+                # Header-panel links (attachment-link) are canonical; expandedPanel (cell-link) are duplicates.
                 seen: set[str] = set()
                 unique_hrefs: list[str] = []
-                for m in re.finditer(r'href="([^"]*anlagenHeader[^"]*)"', resp_source.text):
+                for m in re.finditer(r'href="([^"]*attachment-link[^"]*)"', resp_source.text):
                     h = m.group(1)
                     if h not in seen:
                         seen.add(h)

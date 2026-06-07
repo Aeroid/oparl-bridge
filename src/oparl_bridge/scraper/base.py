@@ -6,10 +6,17 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
+import httpx
+from bs4 import BeautifulSoup, NavigableString, Tag
 from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
 from oparl_bridge.config import Settings
 from oparl_bridge.config import settings as default_settings
+
+_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 oparl-bridge/0.1"
+)
 
 
 @dataclass
@@ -26,7 +33,7 @@ class ScrapedOrganization:
 
 @dataclass
 class ScrapedMeeting:
-    id: int  # SILFDNR
+    id: int | None  # SILFDNR — None for planned meetings not yet assigned an ID
     name: str
     organization_id: int | None = None
     start: str | None = None  # ISO 8601 string, parsed later
@@ -71,32 +78,44 @@ class ScrapedPaper:
 
 
 class AllrisScraper:
-    """Async Playwright scraper for ALLRIS municipal information systems."""
+    """Async scraper for ALLRIS municipal information systems.
+
+    Playwright is used for pages that require Wicket JS interactions (gr010, si010, si018).
+    httpx is used for static detail pages (to010, to020, vo020, gr020).
+    """
 
     def __init__(self, cfg: Settings = default_settings) -> None:
         self.cfg = cfg
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
+        self._http: httpx.AsyncClient | None = None
+        self._http_warmed_up: bool = False
+        self._http_to010_visited: bool = False  # vo020 requires prior to010 visit
+        self._playwright_warmed_up: bool = False
 
     @asynccontextmanager
     async def session(self) -> AsyncGenerator["AllrisScraper", None]:
-        """Context manager that launches a browser and tears it down after use."""
+        """Context manager that launches a browser and httpx client, tears both down after use."""
         async with async_playwright() as pw:
             self._browser = await pw.chromium.launch(headless=self.cfg.scraper_headless)
             self._context = await self._browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 oparl-bridge/0.1"
-                ),
-                accept_downloads=True,
+                user_agent=_UA, accept_downloads=True,
             )
-            try:
-                yield self
-            finally:
-                await self._context.close()
-                await self._browser.close()
-                self._browser = None
-                self._context = None
+            async with httpx.AsyncClient(
+                follow_redirects=True,
+                timeout=30.0,
+                headers={"User-Agent": _UA},
+            ) as http:
+                self._http = http
+                self._http_warmed_up = False
+                try:
+                    yield self
+                finally:
+                    self._http = None
+                    await self._context.close()
+                    await self._browser.close()
+                    self._browser = None
+                    self._context = None
 
     async def _new_page(self) -> Page:
         if self._context is None:
@@ -110,19 +129,65 @@ class AllrisScraper:
     def _url(self, path: str) -> str:
         return f"{self.cfg.allris_base_url.rstrip('/')}/{path.lstrip('/')}"
 
-    async def _goto(self, page: Page, url: str) -> None:
-        """Navigate to a URL, respecting the configured inter-request delay."""
-        if self.cfg.scraper_delay_ms > 0:
-            await asyncio.sleep(self.cfg.scraper_delay_ms / 1000)
-        await page.goto(url, wait_until="networkidle")
+    async def _goto(self, page: Page, url: str, _retries: int = 2) -> None:
+        """Navigate to a URL, respecting the configured inter-request delay.
 
-    async def warmup(self) -> None:
-        """Visit gr010 to establish a Wicket session without parsing anything."""
+        Retries up to _retries times on transient errors (ALLRIS is occasionally flaky).
+        """
+        last_exc: Exception | None = None
+        for attempt in range(1, _retries + 1):
+            if self.cfg.scraper_delay_ms > 0:
+                await asyncio.sleep(self.cfg.scraper_delay_ms / 1000)
+            try:
+                await page.goto(url, wait_until="networkidle")
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < _retries:
+                    await asyncio.sleep(2.0)
+        raise last_exc
+
+    async def _http_get(self, path: str, _retries: int = 2) -> BeautifulSoup:
+        """Fetch a detail page via httpx and return a BeautifulSoup.
+
+        Performs a one-time gr010 warmup to establish JSESSIONID before the first request.
+        Retries up to _retries times on transient errors (ALLRIS is occasionally flaky).
+        """
+        if self._http is None:
+            raise RuntimeError("Scraper must be used inside an `async with scraper.session()` block")
+        if not self._http_warmed_up:
+            await asyncio.sleep(self.cfg.scraper_delay_ms / 1000)
+            await self._http.get(self._url("/gr010"))
+            self._http_warmed_up = True
+        url = self._url(path)
+        last_exc: Exception | None = None
+        for attempt in range(1, _retries + 1):
+            if self.cfg.scraper_delay_ms > 0:
+                await asyncio.sleep(self.cfg.scraper_delay_ms / 1000)
+            try:
+                resp = await self._http.get(url)
+                resp.raise_for_status()
+                return BeautifulSoup(resp.text, "html.parser")
+            except Exception as exc:
+                last_exc = exc
+                if attempt < _retries:
+                    await asyncio.sleep(2.0)
+        raise last_exc
+
+    async def _ensure_playwright_session(self) -> None:
+        """Visit gr010 to establish a Playwright Wicket session if not already done."""
+        if self._playwright_warmed_up:
+            return
         page = await self._new_page()
         try:
             await self._goto(page, self._url("/gr010"))
+            self._playwright_warmed_up = True
         finally:
             await page.close()
+
+    async def warmup(self) -> None:
+        """Visit gr010 to establish a Wicket session without parsing anything."""
+        await self._ensure_playwright_session()
 
     async def fetch_file_content(
         self, source_id: int, file_url: str, source_page: str = "paper"
@@ -211,6 +276,7 @@ class AllrisScraper:
 
     async def scrape_organizations(self) -> list[ScrapedOrganization]:
         """Scrape the committee list from gr010."""
+        await self._ensure_playwright_session()
         page = await self._new_page()
         try:
             await self._goto(page, self._url("/gr010"))
@@ -219,13 +285,9 @@ class AllrisScraper:
             await page.close()
 
     async def scrape_memberships(self, organization_id: int) -> list[ScrapedMembership]:
-        """Scrape committee members from gr020."""
-        page = await self._new_page()
-        try:
-            await self._goto(page, self._url(f"/gr020?GRLFDNR={organization_id}"))
-            return await _parse_gr020(page)
-        finally:
-            await page.close()
+        """Scrape committee members from gr020 via httpx."""
+        soup = await self._http_get(f"/gr020?GRLFDNR={organization_id}")
+        return _parse_gr020_bs(soup)
 
     async def scrape_meetings_for_organization(
         self, organization_id: int
@@ -236,11 +298,12 @@ class AllrisScraper:
         filter to 2000-01-01–2099-12-31 to capture the full history.
         Paginates through all result pages (default 25 rows/page).
         """
+        await self._ensure_playwright_session()
         page = await self._new_page()
         try:
             await self._goto(page, self._url(f"/si018?GRLFDNR={organization_id}"))
             await _set_full_date_range(page)
-            all_results = await _parse_meetings(page, organization_id)
+            all_results = await _parse_meetings(page, organization_id, capture_no_id=True)
             visited: set[int] = {1}
 
             while True:
@@ -261,22 +324,30 @@ class AllrisScraper:
                 await next_link.click()
                 await page.wait_for_load_state("networkidle", timeout=30000)
                 visited.add(next_num)
-                more = await _parse_meetings(page, organization_id)
+                more = await _parse_meetings(page, organization_id, capture_no_id=True)
                 all_results.extend(more)
 
-            # Deduplicate by SILFDNR — sidebar links appear on every page
-            seen: set[int] = set()
+            # Deduplicate: by SILFDNR for linked meetings, by start for no-ID meetings
+            seen_ids: set[int] = set()
+            seen_starts: set[str] = set()
             unique: list[ScrapedMeeting] = []
             for m in all_results:
-                if m.id not in seen:
-                    seen.add(m.id)
-                    unique.append(m)
+                if m.id is not None:
+                    if m.id not in seen_ids:
+                        seen_ids.add(m.id)
+                        unique.append(m)
+                else:
+                    key = m.start or ""
+                    if key and key not in seen_starts:
+                        seen_starts.add(key)
+                        unique.append(m)
             return unique
         finally:
             await page.close()
 
     async def scrape_all_meetings(self) -> list[ScrapedMeeting]:
         """Scrape the full meeting calendar from si010."""
+        await self._ensure_playwright_session()
         page = await self._new_page()
         try:
             await self._goto(page, self._url("/si010"))
@@ -287,38 +358,41 @@ class AllrisScraper:
     async def scrape_meeting_detail(
         self, meeting_id: int
     ) -> tuple[ScrapedMeeting, list[ScrapedAgendaItem]]:
-        """Scrape a meeting detail page (to010) including agenda items."""
-        page = await self._new_page()
-        try:
-            await self._goto(page, self._url(f"/to010?SILFDNR={meeting_id}&refresh=false"))
-            meeting = await _parse_meeting_detail(page, meeting_id)
-            agenda_items = await _parse_agenda_items(page)
-            return meeting, agenda_items
-        finally:
-            await page.close()
+        """Scrape a meeting detail page (to010) via httpx."""
+        soup = await self._http_get(f"/to010?SILFDNR={meeting_id}&refresh=false")
+        self._http_to010_visited = True
+        return _parse_meeting_detail_bs(soup, meeting_id, self.cfg.allris_base_url), \
+               _parse_agenda_items_bs(soup, self.cfg.allris_base_url)
 
     async def scrape_paper(self, paper_id: int) -> ScrapedPaper | None:
-        """Scrape a Vorlage/Drucksache detail page (vo020)."""
+        """Scrape a Vorlage/Drucksache detail page (vo020).
+
+        Uses httpx when called after scrape_meeting_detail (to010 visit establishes
+        Wicket state required by vo020). Falls back to Playwright otherwise.
+        """
+        if self._http_to010_visited:
+            soup = await self._http_get(f"/vo020?VOLFDNR={paper_id}")
+            return _parse_paper_bs(soup, paper_id, self.cfg.allris_base_url)
+        # Fallback: Playwright (standalone use without prior to010 visit)
         page = await self._new_page()
         try:
             await self._goto(page, self._url(f"/vo020?VOLFDNR={paper_id}"))
-            return await _parse_paper(page, paper_id)
+            return _parse_paper_bs(BeautifulSoup(await page.content(), "html.parser"),
+                                   paper_id, self.cfg.allris_base_url)
         finally:
             await page.close()
+
+    async def prepare_for_to020(self, meeting_id: int) -> None:
+        """Visit to010 to establish Wicket session state required by to020."""
+        await self._http_get(f"/to010?SILFDNR={meeting_id}&refresh=false")
+        self._http_to010_visited = True
 
     async def scrape_agenda_item_detail(
         self, item_id: int
     ) -> tuple[str | None, str | None, str | None, str | None, list[ScrapedFile]]:
-        """Scrape to020 for Beschlussart, Beschlusstext, Abstimmungsergebnis, Wortprotokoll, Anlagen.
-
-        Returns (beschlussart, resolution_text, vote_text, word_contribution, files).
-        """
-        page = await self._new_page()
-        try:
-            await self._goto(page, self._url(f"/to020?TOLFDNR={item_id}"))
-            return await _parse_to020(page, item_id)
-        finally:
-            await page.close()
+        """Scrape to020 via httpx. Returns (beschlussart, resolution_text, vote_text, word_contribution, files)."""
+        soup = await self._http_get(f"/to020?TOLFDNR={item_id}")
+        return _parse_to020_bs(soup, item_id)
 
 
 # ---------------------------------------------------------------------------
@@ -430,13 +504,21 @@ async def _set_full_date_range(page: Page) -> None:
         await page.wait_for_load_state("networkidle", timeout=30000)
 
 
-async def _parse_meetings(page: Page, organization_id: int | None) -> list[ScrapedMeeting]:
+async def _parse_meetings(
+    page: Page,
+    organization_id: int | None,
+    capture_no_id: bool = False,
+) -> list[ScrapedMeeting]:
     """
     Parse meeting rows from si010 or si018.
 
     si018 column structure: Datum | Uhrzeit | Sitzung (link) | Rang
     Date and time are in separate columns and must be combined.
     Location is not available on list pages — scraped from detail pages.
+
+    When capture_no_id=True (si018 only), rows without a SILFDNR link are also
+    captured as ScrapedMeeting(id=None, …) — these are planned meetings not yet
+    assigned an ID by ALLRIS.
     """
     results: list[ScrapedMeeting] = []
 
@@ -447,37 +529,43 @@ async def _parse_meetings(page: Page, organization_id: int | None) -> list[Scrap
 
     rows = await page.query_selector_all("table tr")
     for row in rows:
-        link = await row.query_selector("a[href*='SILFDNR']")
-        if link is None:
-            continue
-
-        href = await link.get_attribute("href") or ""
-        silfdnr = _extract_int_param(href, "SILFDNR")
-        if silfdnr is None:
-            continue
-
-        name = (await link.inner_text()).strip()
         cells = await row.query_selector_all("td")
-        start_str = None
-        if len(cells) >= 2:
-            # cells[0] = date ("Do.,\n24.09.2026"), cells[1] = time ("19:30")
+        link = await row.query_selector("a[href*='SILFDNR']")
+
+        if link is not None:
+            href = await link.get_attribute("href") or ""
+            silfdnr = _extract_int_param(href, "SILFDNR")
+            if silfdnr is None:
+                continue
+            name = (await link.inner_text()).strip()
+            start_str = None
+            if len(cells) >= 2:
+                date_raw = (await cells[0].inner_text()).strip()
+                time_raw = (await cells[1].inner_text()).strip()
+                combined = f"{date_raw} {time_raw}".replace("\n", " ")
+                start_str = _parse_german_datetime(combined) or None
+            results.append(ScrapedMeeting(
+                id=silfdnr, name=name, organization_id=organization_id, start=start_str,
+            ))
+        elif capture_no_id and len(cells) >= 3:
+            # Planned meeting row: no SILFDNR link yet, but date+time+name present
             date_raw = (await cells[0].inner_text()).strip()
             time_raw = (await cells[1].inner_text()).strip()
+            name_raw = (await cells[2].inner_text()).strip()
+            if not name_raw:
+                continue
             combined = f"{date_raw} {time_raw}".replace("\n", " ")
-            start_str = _parse_german_datetime(combined) or None
+            start_str = _parse_german_datetime(combined)
+            if start_str is None:
+                continue  # no valid date — header or non-meeting row
+            results.append(ScrapedMeeting(
+                id=None, name=name_raw, organization_id=organization_id, start=start_str,
+            ))
 
-        results.append(
-            ScrapedMeeting(
-                id=silfdnr,
-                name=name,
-                organization_id=organization_id,
-                start=start_str,
-            )
-        )
     return results
 
 
-async def _parse_meeting_detail(page: Page, meeting_id: int) -> ScrapedMeeting:
+def _parse_meeting_detail_bs(soup: BeautifulSoup, meeting_id: int, base_url: str) -> ScrapedMeeting:
     """Parse the header block of a to010 meeting detail page.
 
     to010 dt labels: Betreff, Gremium, Datum, Status, Uhrzeit, Anlass, Raum, Ort
@@ -485,207 +573,110 @@ async def _parse_meeting_detail(page: Page, meeting_id: int) -> ScrapedMeeting:
     name = ""
     raum = None
     ort = None
+    datum_raw = None
+    uhrzeit_raw = None
+    organization_id = None
 
     # Use only dt elements — th elements in the agenda table share the same
     # labels (e.g. "Betreff") and would overwrite the correctly parsed values.
-    dts = await page.query_selector_all("dt")
-    for dt in dts:
-        label = (await dt.inner_text()).strip().lower().rstrip(":")
-        sibling = await dt.evaluate_handle("(el) => el.nextElementSibling")
-        elem = sibling.as_element()
-        value = (await elem.inner_text()).strip() if elem else ""
+    for dt in soup.find_all("dt"):
+        label = dt.get_text().strip().lower().rstrip(":")
+        dd = dt.find_next_sibling("dd")
+        value = dd.get_text(" ", strip=True) if dd else ""
         if label == "betreff":
             name = value
         elif label == "raum":
             raum = value or None
         elif label == "ort":
             ort = value or None
+        elif label == "datum":
+            datum_raw = value or None
+        elif label == "uhrzeit":
+            uhrzeit_raw = value or None
+        elif label == "gremium" and dd is not None:
+            a = dd.find("a", href=re.compile(r"GRLFDNR", re.I))
+            if a:
+                organization_id = _extract_int_param(a.get("href", ""), "GRLFDNR")
 
-    # Combine room and address into a single location string
     location_parts = [p for p in [raum, ort] if p]
     location = ", ".join(location_parts) or None
 
     if not name:
-        name = (await page.title()).strip()
+        title_tag = soup.find("title")
+        name = title_tag.get_text().strip() if title_tag else ""
 
-    # Meeting-level documents: wicket/resource links outside the agenda table.
-    # These are present on initial page load (no Wicket expand needed).
+    start = None
+    if datum_raw:
+        combined = f"{datum_raw} {uhrzeit_raw or ''}".replace("\n", " ").strip()
+        start = _parse_german_datetime(combined)
+
+    # Meeting-level documents: wicket/resource links outside any table
     files: list[ScrapedFile] = []
     seen_urls: set[str] = set()
-    for a in await page.query_selector_all("a[href*='wicket/resource']"):
-        in_table = await a.evaluate("el => !!el.closest('table')")
-        if in_table:
+    allris_base = base_url.rstrip("/")
+    for a in soup.find_all("a", href=re.compile(r"wicket/resource")):
+        if a.find_parent("table"):
             continue
-        href = await a.get_attribute("href") or ""
-        label = (await a.inner_text()).strip()
+        href = a.get("href", "")
+        label = a.get_text(strip=True)
+        if not href.startswith("http"):
+            href = f"{allris_base}/allris/{href.lstrip('/')}"
         if href and label and href not in seen_urls:
             seen_urls.add(href)
             files.append(ScrapedFile(name=label, url=href))
 
-    return ScrapedMeeting(id=meeting_id, name=name, location=location, files=files)
+    return ScrapedMeeting(id=meeting_id, name=name, location=location, start=start,
+                          organization_id=organization_id, files=files)
 
 
-async def _parse_agenda_items(page: Page) -> list[ScrapedAgendaItem]:
-    """
-    Parse Tagesordnungspunkte from a to010 page.
+def _parse_agenda_items_bs(soup: BeautifulSoup, base_url: str) -> list[ScrapedAgendaItem]:
+    """Parse Tagesordnungspunkte from a to010 page.
 
     to010 column structure:
-      cells[0]: +/- expand (empty for future meetings)
-      cells[1]: TOP number ("Ö 1", "N 2") — Wicket link id="link_{TOLFDNR}"
-      cells[2]: name — may have a[href*='to020'] for past meetings, bare <a> for future
+      cells[0]: +/- expand button (ignored — detail data comes from to020)
+      cells[1]: TOP number — Wicket anchor id="link_{TOLFDNR}"
+      cells[2]: name
       cells[3]: empty
-      cells[4]: Vorlage — vo020?VOLFDNR= link (or to010 for Protokolle)
-      cells[5]: Beschlussart
-
-    TOLFDNR is reliably available as the numeric suffix of the id attribute on the
-    anchor in cells[1]: <a href="#" id="link_1023671">Ö 1</a>.
-
-    Clicking the expand button reveals Beschlusstext, Abstimmungsergebnis, and
-    any attachments (Anlagen, Wortbeiträge) in a sibling row inserted by Wicket.
+      cells[4]: Vorlage — vo020?VOLFDNR= link
     """
-    base_url = page.url.split("/allris/")[0]
-
-    # Step 1: Collect TOP row handles and click all expand buttons.
-    # TOP rows are identified by a Wicket anchor with id="link_{TOLFDNR}" in cells[1].
-    all_rows = await page.query_selector_all("table tr")
-    top_row_handles = []
-    for row in all_rows:
-        nr_link = await row.query_selector("td:nth-child(2) a[id^='link_']")
-        if nr_link is None:
-            continue
-        top_row_handles.append(row)
-        expand_btn = await row.query_selector("td:first-child a")
-        if expand_btn:
-            try:
-                await expand_btn.click()
-                await page.wait_for_timeout(250)
-            except Exception:
-                pass
-
-    if top_row_handles:
-        try:
-            await page.wait_for_load_state("networkidle", timeout=15000)
-        except Exception:
-            pass
-
-    # Step 2: Parse each TOP row and its immediately following detail row.
     results: list[ScrapedAgendaItem] = []
-    for row in top_row_handles:
-        nr_link = await row.query_selector("td:nth-child(2) a[id^='link_']")
+
+    for row in soup.find_all("tr"):
+        tds = row.find_all("td", recursive=False)
+        if len(tds) < 2:
+            continue
+        nr_link = tds[1].find("a", id=re.compile(r"^link_\d+$"))
         if nr_link is None:
             continue
 
-        link_id = await nr_link.get_attribute("id") or ""
-        m_id = re.search(r'link_(\d+)$', link_id)
+        m_id = re.search(r"link_(\d+)$", nr_link.get("id", ""))
         if m_id is None:
             continue
         tolfdnr = int(m_id.group(1))
 
-        cells = await row.query_selector_all("td")
-        # Item name: prefer to020 link text, fall back to any <a> text in cells[2]
-        item_name = ""
-        if len(cells) > 2:
-            name_link = await cells[2].query_selector("a")
-            if name_link:
-                item_name = (await name_link.inner_text()).strip()
-            if not item_name:
-                item_name = (await cells[2].inner_text()).strip().split('\n')[0]
-
-        raw_number = (await cells[1].inner_text()).strip() if len(cells) > 1 else ""
-        # Wicket expand may inject "Beschlüsse für …" text directly into the
-        # number cell — extract only the leading TOP token (e.g. "Ö 4.1").
-        m = re.match(r'^([A-ZÄÖÜa-züäö]*\s*\d+(?:\.\d+)?)', raw_number)
-        number_text = m.group(1).strip() if m else raw_number.split('\n')[0].strip()
-        number = number_text or None
+        raw_number = tds[1].get_text(strip=True)
+        m = re.match(r"^([A-ZÄÖÜa-züäö]*\s*\d+(?:\.\d+)?)", raw_number)
+        number = (m.group(1).strip() if m else raw_number.split("\n")[0].strip()) or None
         public = not raw_number.upper().startswith("N ")
+
+        item_name = ""
+        if len(tds) > 2:
+            name_a = tds[2].find("a")
+            item_name = name_a.get_text(strip=True) if name_a else tds[2].get_text(strip=True).split("\n")[0]
 
         paper_id = None
         paper_reference = None
-        if len(cells) > 4:
-            vo_link = await cells[4].query_selector("a[href*='vo020']")
+        if len(tds) > 4:
+            vo_link = tds[4].find("a", href=re.compile(r"vo020", re.I))
             if vo_link:
-                vo_href = await vo_link.get_attribute("href") or ""
-                paper_id = _extract_int_param(vo_href, "VOLFDNR")
-                paper_reference = (await vo_link.inner_text()).strip() or None
+                paper_id = _extract_int_param(vo_link.get("href", ""), "VOLFDNR")
+                paper_reference = vo_link.get_text(strip=True) or None
 
-        # Parse the detail row injected by Wicket after the expand click.
-        resolution_text = None
-        vote_text = None
-        files: list[ScrapedFile] = []
-        detail_handle = await row.evaluate_handle("el => el.nextElementSibling")
-        detail_elem = detail_handle.as_element()
-        if detail_elem:
-            # Only treat it as a detail row if it has no TOP number link of its own.
-            sibling_top_link = await detail_elem.query_selector("td:nth-child(2) a[id^='link_']")
-            if sibling_top_link is None:
-                resolution_text, vote_text, files = await _parse_detail_content(
-                    detail_elem, base_url
-                )
-
-        results.append(
-            ScrapedAgendaItem(
-                id=tolfdnr,
-                name=item_name,
-                number=number,
-                public=public,
-                paper_id=paper_id,
-                paper_reference=paper_reference,
-                resolution_text=resolution_text,
-                vote_text=vote_text,
-                result=_derive_result(vote_text, resolution_text),
-                files=files,
-            )
-        )
+        results.append(ScrapedAgendaItem(
+            id=tolfdnr, name=item_name, number=number, public=public,
+            paper_id=paper_id, paper_reference=paper_reference,
+        ))
     return results
-
-
-async def _parse_detail_content(
-    elem, base_url: str
-) -> tuple[str | None, str | None, list[ScrapedFile]]:
-    """Parse the Wicket-injected detail panel of an expanded TOP row."""
-    resolution_text = None
-    vote_text = None
-    files: list[ScrapedFile] = []
-
-    # Try table-based label/value pairs first (most common ALLRIS layout).
-    rows = await elem.query_selector_all("tr")
-    for row in rows:
-        cells = await row.query_selector_all("td, th")
-        if len(cells) >= 2:
-            label = (await cells[0].inner_text()).strip().lower().rstrip(":")
-            value = " ".join((await cells[1].inner_text()).split())
-            if "beschluss" in label and "art" not in label and "datum" not in label:
-                resolution_text = value or None
-            elif "abstimmung" in label:
-                vote_text = value or None
-
-    # Fallback: dt/dd pairs.
-    if not resolution_text and not vote_text:
-        dts = await elem.query_selector_all("dt")
-        for dt in dts:
-            label = (await dt.inner_text()).strip().lower().rstrip(":")
-            sibling = (await dt.evaluate_handle("el => el.nextElementSibling")).as_element()
-            if sibling:
-                value = " ".join((await sibling.inner_text()).split())
-                if "beschluss" in label and "art" not in label:
-                    resolution_text = value or None
-                elif "abstimmung" in label:
-                    vote_text = value or None
-
-    # PDF links (Anlagen, Wortbeiträge).
-    seen: set[str] = set()
-    for pdf_link in await elem.query_selector_all("a[href*='.pdf']"):
-        href = await pdf_link.get_attribute("href") or ""
-        if not href:
-            continue
-        abs_url = href if href.startswith("http") else f"{base_url}/allris/{href.lstrip('/')}"
-        if abs_url in seen:
-            continue
-        seen.add(abs_url)
-        link_name = " ".join((await pdf_link.inner_text()).split()) or abs_url.rsplit("/", 1)[-1]
-        files.append(ScrapedFile(name=link_name, url=abs_url))
-
-    return resolution_text, vote_text, files
 
 
 def _derive_result(vote_text: str | None, resolution_text: str | None) -> str | None:
@@ -705,48 +696,45 @@ def _derive_result(vote_text: str | None, resolution_text: str | None) -> str | 
     return None
 
 
-async def _parse_to020(
-    page: Page, tolfdnr: int
-) -> tuple[str | None, str | None, str | None, str | None, list[ScrapedFile]]:
-    """Parse Beschlussart, Beschlusstext, Abstimmungsergebnis, Wortprotokoll, and Anlagen from to020.
+def _elem_to_text(elem: Tag) -> str:
+    """Convert a BS4 element to plain text, treating block elements as paragraph breaks."""
+    def walk(node) -> str:
+        if isinstance(node, NavigableString):
+            return re.sub(r"[ \t]+", " ", str(node))
+        if not isinstance(node, Tag):
+            return ""
+        if node.name == "br":
+            return "\n"
+        kids = "".join(walk(c) for c in node.children)
+        if node.name in ("p", "div", "li", "h1", "h2", "h3", "h4"):
+            t = kids.strip()
+            return t + "\n\n" if t else ""
+        return kids
 
-    Returns (beschlussart, resolution_text, vote_text, word_contribution, files).
-    """
+    return re.sub(r"\n{3,}", "\n\n", walk(elem)).strip()
+
+
+def _parse_to020_bs(
+    soup: BeautifulSoup, tolfdnr: int
+) -> tuple[str | None, str | None, str | None, str | None, list[ScrapedFile]]:
+    """Parse Beschlussart, Beschlusstext, Abstimmungsergebnis, Wortprotokoll, Anlagen from to020."""
     beschlussart = None
     resolution_text = None
     vote_text = None
     word_contribution = None
 
-    el = await page.query_selector("#toBeschlussart")
+    el = soup.find(id="toBeschlussart")
     if el:
-        beschlussart = (await el.inner_text()).strip() or None
+        beschlussart = el.get_text(strip=True) or None
 
-    _DOM_TO_TEXT = """el => {
-        function walk(node) {
-            if (node.nodeType === 3) return node.textContent.replace(/[ \\t]+/g, ' ');
-            if (!node.tagName) return '';
-            const tag = node.tagName.toLowerCase();
-            const kids = Array.from(node.childNodes).map(walk).join('');
-            if (tag === 'br') return '\\n';
-            if (['p', 'div', 'li', 'h1', 'h2', 'h3', 'h4'].includes(tag)) {
-                const t = kids.trim();
-                return t ? t + '\\n\\n' : '';
-            }
-            return kids;
-        }
-        return walk(el).replace(/\\n{3,}/g, '\\n\\n').trim();
-    }"""
-
-    for link in await page.query_selector_all("a[data-simpletooltip-text]"):
-        tip = (await link.get_attribute("data-simpletooltip-text") or "").lower()
-        section = (await link.evaluate_handle("el => el.closest('.compFull')")).as_element()
+    for link in soup.find_all("a", attrs={"data-simpletooltip-text": True}):
+        tip = (link.get("data-simpletooltip-text") or "").lower()
+        section = link.find_parent(class_="compFull")
         if not section:
             continue
-        doc_parts = await section.query_selector_all("div.docPart")
-        parts = [await dp.evaluate(_DOM_TO_TEXT) for dp in doc_parts]
-        import re as _re
-        text = "\n\n".join(p.strip() for p in parts if p.strip())
-        text = _re.sub(r"\n {1,}", "\n", text).strip() or None
+        doc_parts = section.find_all("div", class_="docPart")
+        parts = [_elem_to_text(dp) for dp in doc_parts]
+        text = re.sub(r"\n {1,}", "\n", "\n\n".join(p for p in parts if p)).strip() or None
         if "abstimmung" in tip:
             vote_text = text
         elif "wortprotokoll" in tip or "wortbeitrag" in tip:
@@ -754,18 +742,17 @@ async def _parse_to020(
         elif "beschluss" in tip:
             resolution_text = text
 
-    # Anlagen: unique .attlink.pdf links from the anlagenHeaderPanel
+    # Capture canonical header-panel links only (attachment-link), skip expandedPanel duplicates (cell-link)
     files: list[ScrapedFile] = []
     seen: set[str] = set()
     anlage_idx = 0
-    for a in await page.query_selector_all("a.attlink.pdf"):
-        href = await a.get_attribute("href") or ""
-        if "anlagenHeader" not in href or href in seen:
+    for a in soup.select("a.attlink.pdf"):
+        href = a.get("href", "")
+        if "attachment-link" not in href or href in seen:
             continue
         seen.add(href)
-        name = (await a.inner_text()).strip()
         files.append(ScrapedFile(
-            name=name,
+            name=a.get_text(strip=True),
             url=f"allris://to020/{tolfdnr}/{anlage_idx}",
         ))
         anlage_idx += 1
@@ -773,77 +760,69 @@ async def _parse_to020(
     return beschlussart, resolution_text, vote_text, word_contribution, files
 
 
-async def _parse_paper(page: Page, paper_id: int) -> ScrapedPaper | None:
+def _parse_paper_bs(soup: BeautifulSoup, paper_id: int, base_url: str) -> ScrapedPaper:
     """Parse a vo020 Vorlage page."""
     name = ""
     reference = None
     paper_type = None
     files: list[ScrapedFile] = []
 
-    # vo020 dt labels: Betreff, Status, Vorlageart, Vorlagenzeichen, Federführend, ...
-    dts = await page.query_selector_all("dt")
-    for dt in dts:
-        label = (await dt.inner_text()).strip().lower().rstrip(":")
-        sibling = (await dt.evaluate_handle("(el) => el.nextElementSibling")).as_element()
-        if sibling:
-            value = " ".join((await sibling.inner_text()).split())  # normalise whitespace
-            if label == "betreff":
-                name = value
-            elif label == "vorlageart":
-                paper_type = value or None
-            elif label in ("vorlagenzeichen", "vorlagen-nr.", "aktenzeichen", "drucksachennummer"):
-                reference = value or None
+    for dt in soup.find_all("dt"):
+        label = dt.get_text().strip().lower().rstrip(":")
+        dd = dt.find_next_sibling("dd")
+        value = " ".join(dd.get_text().split()) if dd else ""
+        if label == "betreff":
+            name = value
+        elif label == "vorlageart":
+            paper_type = value or None
+        elif label in ("vorlagenzeichen", "vorlagen-nr.", "aktenzeichen", "drucksachennummer"):
+            reference = value or None
 
     if not name:
-        name = (await page.title()).strip()
+        title_tag = soup.find("title")
+        candidate = title_tag.get_text().strip() if title_tag else ""
+        # Ignore generic ALLRIS page titles — they mean the Betreff field was absent
+        if candidate and "ratsinformationssystem" not in candidate.lower():
+            name = candidate
 
-    # PDF links use Wicket resource URLs: /allris/wicket/resource/.../doc<id>.pdf
+    # Reference may appear in <h1 class="title"> as "{Vorlageart} - {VO/YY/NNNNN}"
+    if reference is None:
+        h1 = soup.find("h1", class_="title")
+        if h1:
+            m = re.search(r"\b(VO/\d{2}/\d+(?:-\d+)?)\b", h1.get_text())
+            if m:
+                reference = m.group(1)
+
     seen: set[str] = set()
-    base = page.url.split("/allris/")[0]
-    for doc_link in await page.query_selector_all("a[href*='.pdf']"):
-        href = await doc_link.get_attribute("href") or ""
+    allris_base = base_url.rstrip("/")
+    for a in soup.find_all("a", href=re.compile(r"\.pdf", re.I)):
+        href = a.get("href", "")
         if not href:
             continue
-        abs_url = href if href.startswith("http") else f"{base}/allris/{href.lstrip('/')}"
+        abs_url = href if href.startswith("http") else f"{allris_base}/allris/{href.lstrip('/')}"
         if abs_url in seen:
             continue
         seen.add(abs_url)
-        link_name = " ".join((await doc_link.inner_text()).split()) or href.rsplit("/", 1)[-1]
+        link_name = " ".join(a.get_text().split()) or href.rsplit("/", 1)[-1]
         files.append(ScrapedFile(name=link_name, url=abs_url))
 
-    return ScrapedPaper(
-        id=paper_id,
-        name=name,
-        reference=reference,
-        paper_type=paper_type,
-        files=files,
-    )
+    return ScrapedPaper(id=paper_id, name=name, reference=reference,
+                        paper_type=paper_type, files=files)
 
 
-async def _parse_gr020(page: Page) -> list[ScrapedMembership]:
-    """Parse the gr020 committee detail page for member list.
-
-    ALLRIS renders a table with section header rows (empty second cell)
-    and member rows: Name (KPLFDNR link) | Art der Mitarbeit (role).
-    """
+def _parse_gr020_bs(soup: BeautifulSoup) -> list[ScrapedMembership]:
+    """Parse the gr020 committee detail page for member list."""
     results: list[ScrapedMembership] = []
-    try:
-        await page.wait_for_selector("a[href*='KPLFDNR']", timeout=15000)
-    except Exception:
-        return results
-
-    rows = await page.query_selector_all("table tr")
-    for row in rows:
-        link = await row.query_selector("a[href*='KPLFDNR']")
+    for row in soup.find_all("tr"):
+        link = row.find("a", href=re.compile(r"KPLFDNR", re.I))
         if link is None:
             continue
-        href = await link.get_attribute("href") or ""
-        kplfdnr = _extract_int_param(href, "KPLFDNR")
+        kplfdnr = _extract_int_param(link.get("href", ""), "KPLFDNR")
         if kplfdnr is None:
             continue
-        name = (await link.inner_text()).strip()
-        cells = await row.query_selector_all("td")
-        role = (await cells[1].inner_text()).strip() or None if len(cells) > 1 else None
+        name = link.get_text(strip=True)
+        tds = row.find_all("td")
+        role = tds[1].get_text(strip=True) or None if len(tds) > 1 else None
         results.append(ScrapedMembership(person_id=kplfdnr, person_name=name, role=role))
     return results
 

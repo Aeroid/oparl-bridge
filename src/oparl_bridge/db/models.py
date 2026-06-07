@@ -15,6 +15,8 @@ class Organization(Base):
     name: Mapped[str] = mapped_column(String(500))
     short_name: Mapped[str | None] = mapped_column(String(100))
     organization_type: Mapped[str | None] = mapped_column(String(100))
+    next_meeting_date: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    future_meeting_dates: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list of ISO datetimes
     scraped_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     meetings: Mapped[list["Meeting"]] = relationship(back_populates="organization")

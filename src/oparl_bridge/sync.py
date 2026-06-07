@@ -47,6 +47,15 @@ async def sync_organizations(scraper: AllrisScraper, db: Session) -> list[Organi
         org.short_name = s.short_name
         org.organization_type = s.organization_type
         org.scraped_at = datetime.utcnow()
+        # Store next meeting date for display even when SILFDNR not yet assigned
+        if s.next_date:
+            try:
+                from datetime import datetime as dt
+                org.next_meeting_date = dt.strptime(s.next_date, "%d.%m.%Y").strftime("%Y-%m-%d")
+            except ValueError:
+                org.next_meeting_date = None
+        else:
+            org.next_meeting_date = None
         orgs.append(org)
     db.commit()
     logger.info("Synced %d organizations", len(orgs))
@@ -81,6 +90,8 @@ async def sync_organizations(scraper: AllrisScraper, db: Session) -> list[Organi
 async def sync_meetings(
     scraper: AllrisScraper, db: Session, organization_id: int | None = None
 ) -> list[Meeting]:
+    import json
+
     if organization_id is not None:
         logger.info("Scraping meetings for organization %d ...", organization_id)
         scraped = await scraper.scrape_meetings_for_organization(organization_id)
@@ -88,8 +99,15 @@ async def sync_meetings(
         logger.info("Scraping all meetings from si010 ...")
         scraped = await scraper.scrape_all_meetings()
 
+    from datetime import datetime as dt
+    now_iso = dt.utcnow().isoformat()
+
+    # Split: meetings with SILFDNR vs. planned meetings without ID
+    with_id = [s for s in scraped if s.id is not None]
+    without_id = [s for s in scraped if s.id is None]
+
     meetings = []
-    for s in scraped:
+    for s in with_id:
         is_new = db.get(Meeting, s.id) is None
         mtg = db.get(Meeting, s.id) or Meeting(id=s.id)
         if is_new:
@@ -97,19 +115,28 @@ async def sync_meetings(
         mtg.name = s.name
         mtg.organization_id = s.organization_id
         if s.start:
-            from datetime import datetime as dt
             try:
                 mtg.start = dt.fromisoformat(s.start)
             except ValueError:
                 pass
-        # Reset detail_scraped_at for new meetings so detail scraper picks them up.
-        # Never clear it for existing meetings — that would re-scrape unnecessarily.
         if is_new:
             mtg.detail_scraped_at = None
         mtg.scraped_at = datetime.utcnow()
         meetings.append(mtg)
+
+    # Store future no-ID meetings as JSON on the org (si018 only, needs org_id)
+    if organization_id is not None:
+        org = db.get(Organization, organization_id)
+        if org is not None:
+            future_dates = sorted(
+                [m.start for m in without_id if m.start and m.start > now_iso]
+            )
+            org.future_meeting_dates = json.dumps(future_dates) if future_dates else None
+            # Keep next_meeting_date in sync with first future entry
+            org.next_meeting_date = future_dates[0][:10] if future_dates else org.next_meeting_date
+
     db.commit()
-    logger.info("Synced %d meetings", len(meetings))
+    logger.info("Synced %d meetings (%d planned without ID)", len(meetings), len(without_id))
     return meetings
 
 
@@ -132,6 +159,13 @@ async def sync_meeting_details(scraper: AllrisScraper, db: Session) -> None:
                 mtg.location = scraped.location
             if scraped.name:
                 mtg.name = scraped.name
+            if scraped.start and mtg.start is None:
+                try:
+                    mtg.start = dt.fromisoformat(scraped.start)
+                except ValueError:
+                    pass
+            if scraped.organization_id and mtg.organization_id is None:
+                mtg.organization_id = scraped.organization_id
             # Meeting-level documents (Bekanntmachung, Protokoll, etc.)
             db.query(File).filter(File.meeting_id == mtg.id).delete()
             for sf in scraped.files:
@@ -143,9 +177,9 @@ async def sync_meeting_details(scraper: AllrisScraper, db: Session) -> None:
                     scraped_at=datetime.utcnow(),
                 ))
             for item in items:
-                ai = db.get(AgendaItem, item.id)
-                if ai is None:
-                    ai = AgendaItem(id=item.id)
+                is_new_item = db.get(AgendaItem, item.id) is None
+                ai = db.get(AgendaItem, item.id) or AgendaItem(id=item.id)
+                if is_new_item:
                     db.add(ai)
                 ai.meeting_id = mtg.id
                 ai.name = item.name
@@ -153,9 +187,9 @@ async def sync_meeting_details(scraper: AllrisScraper, db: Session) -> None:
                 ai.public = item.public
                 ai.paper_id = item.paper_id
                 ai.paper_reference = item.paper_reference
-                ai.result = item.result
-                ai.resolution_text = item.resolution_text
-                ai.vote_text = item.vote_text
+                # result/resolution_text/vote_text are owned by the to020 scraper
+                if is_new_item:
+                    ai.result_scraped_at = None
                 ai.scraped_at = datetime.utcnow()
                 for sf in item.files:
                     existing = db.query(File).filter_by(
@@ -179,7 +213,13 @@ async def sync_meeting_details(scraper: AllrisScraper, db: Session) -> None:
 
 
 async def sync_agenda_item_details(scraper: AllrisScraper, db: Session) -> None:
-    """Scrape to020 for all AgendaItems not yet result-scraped."""
+    """Scrape to020 for all AgendaItems not yet result-scraped.
+
+    Groups items by meeting_id and visits to010 first per group — to020 requires
+    a prior to010 visit to establish Wicket navigation state.
+    """
+    from collections import defaultdict
+
     from oparl_bridge.scraper.base import _derive_result
 
     pending = db.query(AgendaItem).filter(AgendaItem.result_scraped_at.is_(None)).all()
@@ -192,36 +232,59 @@ async def sync_agenda_item_details(scraper: AllrisScraper, db: Session) -> None:
         _eta_initial(len(pending), scraper.cfg.scraper_delay_ms),
     )
     start = time.monotonic()
-    for i, ai in enumerate(pending, 1):
-        try:
-            beschlussart, resolution_text, vote_text, word_contribution, item_files = (
-                await scraper.scrape_agenda_item_detail(ai.id)
-            )
-            ai.result = _derive_result(beschlussart, vote_text) or _derive_result(
-                resolution_text, vote_text
-            )
-            ai.resolution_text = resolution_text
-            ai.vote_text = vote_text
-            ai.word_contribution = word_contribution
-            # Anlagen from to020 (sentinel URLs) — replace existing ones
-            db.query(File).filter(
-                File.agenda_item_id == ai.id,
-                File.access_url.like("allris://to020/%"),
-            ).delete()
-            for sf in item_files:
-                db.add(File(
-                    agenda_item_id=ai.id,
-                    name=sf.name,
-                    access_url=sf.url,
-                    mime_type="application/pdf",
-                    scraped_at=datetime.utcnow(),
-                ))
-            ai.result_scraped_at = datetime.utcnow()
-        except Exception as exc:
-            logger.warning("Failed to scrape agenda item detail %d: %s", ai.id, exc)
-        if i % 50 == 0 or i == len(pending):
-            db.commit()
-            logger.info("  %s", _progress(i, len(pending), start))
+
+    # Group by meeting_id so we visit to010 once per meeting before its to020 items
+    by_meeting: dict[int | None, list[AgendaItem]] = defaultdict(list)
+    for ai in pending:
+        by_meeting[ai.meeting_id].append(ai)
+
+    i = 0
+    for meeting_id, items in by_meeting.items():
+        # Establish Wicket session for this meeting's to020 pages
+        if meeting_id is not None:
+            try:
+                await scraper.prepare_for_to020(meeting_id)
+            except Exception as exc:
+                logger.warning("prepare_for_to020 failed for meeting %s: %s", meeting_id, exc)
+
+        for ai in items:
+            i += 1
+            # nichtöffentlich items are always auth-gated — skip the request
+            if (ai.number or "").startswith("N") or "nichtöffentlich" in (ai.name or "").lower():
+                ai.result_scraped_at = datetime.utcnow()
+                if i % 50 == 0 or i == len(pending):
+                    db.commit()
+                    logger.info("  %s", _progress(i, len(pending), start))
+                continue
+            try:
+                beschlussart, resolution_text, vote_text, word_contribution, item_files = (
+                    await scraper.scrape_agenda_item_detail(ai.id)
+                )
+                ai.result = _derive_result(beschlussart, vote_text) or _derive_result(
+                    resolution_text, vote_text
+                )
+                ai.resolution_text = resolution_text
+                ai.vote_text = vote_text
+                ai.word_contribution = word_contribution
+                # Anlagen from to020 (sentinel URLs) — replace existing ones
+                db.query(File).filter(
+                    File.agenda_item_id == ai.id,
+                    File.access_url.like("allris://to020/%"),
+                ).delete()
+                for sf in item_files:
+                    db.add(File(
+                        agenda_item_id=ai.id,
+                        name=sf.name,
+                        access_url=sf.url,
+                        mime_type="application/pdf",
+                        scraped_at=datetime.utcnow(),
+                    ))
+                ai.result_scraped_at = datetime.utcnow()
+            except Exception as exc:
+                logger.warning("Failed to scrape agenda item detail %d: %s", ai.id, exc)
+            if i % 50 == 0 or i == len(pending):
+                db.commit()
+                logger.info("  %s", _progress(i, len(pending), start))
     logger.info("Agenda item details synced.")
 
 
@@ -246,7 +309,7 @@ async def sync_papers(scraper: AllrisScraper, db: Session) -> None:
     logger.info(
         "Scraping %d paper(s) (%s) ...",
         len(pending_ids),
-        _eta(scraper.cfg.scraper_delay_ms, len(pending_ids)),
+        _eta_initial(len(pending_ids), scraper.cfg.scraper_delay_ms),
     )
     start = time.monotonic()
     for i, paper_id in enumerate(pending_ids, 1):
