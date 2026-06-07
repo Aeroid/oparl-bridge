@@ -53,13 +53,14 @@
         .top-detail { font-size: 0.85em; color: var(--pico-muted-color); margin-top: 0.3rem; }
         .top-detail p { margin: 0.15rem 0; }
 
-        .md-badge {
+        .md-badge, .ris-badge {
             display: inline-block; font-size: 0.55em; font-weight: 700; line-height: 1;
             padding: 2px 5px; border-radius: 3px; vertical-align: middle;
             background: var(--pico-muted-border-color); color: var(--pico-muted-color);
             text-decoration: none; letter-spacing: 0.03em; flex-shrink: 0;
         }
         .md-badge:hover { background: var(--pico-primary); color: #fff; }
+        .ris-badge:hover { background: #c05c00; color: #fff; }
 
         /* Split layout — flex so drag handle can resize the PDF panel */
         .split-layout {
@@ -127,6 +128,67 @@
         .tab-nav { display: flex; justify-content: flex-start; gap: 1.5rem; border-bottom: 1px solid var(--pico-muted-border-color); margin-bottom: 1rem; }
         .tab-nav a { padding-bottom: 0.4rem; text-decoration: none; color: var(--pico-muted-color); border-bottom: 2px solid transparent; }
         .tab-nav a.active { color: var(--pico-color); border-bottom-color: var(--pico-primary); font-weight: 600; }
+
+        /* ── Mobile meeting layout ── */
+        .mobile-header {
+            position: sticky; top: 0; z-index: 5;
+            background: var(--pico-background-color, #fff);
+            border-bottom: 1px solid var(--pico-muted-border-color);
+            padding: 0.45rem 1rem;
+            margin: 0 -1rem;
+        }
+        .mobile-header-top {
+            display: flex; align-items: baseline;
+            gap: 0.5rem; justify-content: space-between;
+        }
+        .mobile-header-back {
+            font-size: 0.83em; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; flex: 1 1 0; min-width: 0;
+        }
+        .mobile-header-date {
+            font-size: 0.8em; color: var(--pico-muted-color);
+            white-space: nowrap; flex: 0 0 auto;
+        }
+        .mobile-header-mid {
+            font-size: 0.85em; font-weight: 600; margin-top: 0.1rem;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .mobile-header-bottom {
+            display: flex; align-items: center;
+            justify-content: space-between; gap: 0.5rem; margin-top: 0.2rem;
+        }
+        .mobile-top {
+            padding: 0.6rem 0;
+            border-bottom: 1px solid var(--pico-muted-border-color);
+        }
+        .mobile-top:last-child { border-bottom: none; }
+        .mobile-top-row { display: flex; gap: 0.5rem; align-items: flex-start; }
+        .mobile-top-num {
+            flex: 0 0 3.4em; font-size: 0.75em; font-weight: 600;
+            color: var(--pico-muted-color); padding-top: 0.2em; white-space: nowrap;
+        }
+        .mobile-top-main { flex: 1 1 0; min-width: 0; }
+        .mobile-top-sub { margin-left: 3.9em; margin-top: 0.25rem; }
+        .nonpublic .mobile-top-row { color: var(--pico-muted-color); }
+
+        /* ── Shared mobile list ── */
+        .mlist-type-header {
+            padding: 1.2rem 0 0.25rem;
+            font-size: 0.75em; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.05em;
+            color: var(--pico-muted-color);
+            border-top: 1px solid var(--pico-muted-border-color);
+        }
+        .mlist-type-header:first-child { border-top: none; padding-top: 0.4rem; }
+        .mlist-item {
+            display: flex; flex-direction: column; gap: 0.1rem;
+            padding: 0.55rem 0;
+            border-bottom: 1px solid var(--pico-muted-border-color);
+        }
+        .mlist-item:last-child { border-bottom: none; }
+        .mlist-primary { font-size: 0.93em; }
+        .mlist-secondary { font-size: 0.8em; color: var(--pico-muted-color); }
+        .mlist-row { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
     </style>
 </head>
 <body x-data="app()" x-init="init()" x-cloak>
@@ -201,7 +263,8 @@
     <template x-if="query.trim() && !loading">
         <section>
             <p x-show="searchResults.length === 0">Keine Ergebnisse für „<span x-text="query"></span>".</p>
-            <table x-show="searchResults.length > 0">
+            <!-- Desktop -->
+            <table x-show="searchResults.length > 0 && wideList">
                 <thead>
                     <tr><th>Sitzung</th><th>Gremium</th><th>TOP</th><th>Betreff</th></tr>
                 </thead>
@@ -221,13 +284,31 @@
                     </template>
                 </tbody>
             </table>
+            <!-- Mobile -->
+            <div x-show="searchResults.length > 0 && !wideList">
+                <template x-for="r in searchResults" :key="r.key">
+                    <div class="mlist-item" style="cursor:pointer" @click="openSearchResult(r)">
+                        <div class="mlist-row">
+                            <span class="mlist-primary" x-html="highlight(r.name)"></span>
+                            <span class="mlist-secondary" style="white-space:nowrap" x-text="r.number || ''"></span>
+                        </div>
+                        <div class="mlist-secondary mlist-row">
+                            <span x-text="r.orgName"></span>
+                            <span x-text="formatDateList(r.start)"></span>
+                        </div>
+                        <div x-show="r.paperRef" class="mlist-secondary"
+                             x-html="highlight(r.paperRef)"></div>
+                    </div>
+                </template>
+            </div>
         </section>
     </template>
 
     <!-- Organisations -->
     <template x-if="view === 'orgs' && !loading && !query.trim()">
         <section>
-            <table style="max-width:800px; width:100%; table-layout:fixed;">
+            <!-- Desktop -->
+            <table x-show="wideList" style="max-width:800px; width:100%; table-layout:fixed;">
                 <thead>
                     <tr>
                         <th>Organisation</th>
@@ -288,6 +369,42 @@
                     </template>
                 </tbody>
             </table>
+            <!-- Mobile -->
+            <div x-show="!wideList">
+                <template x-for="row in flatOrgRows" :key="row.isHeader ? 'h-'+row.type : row.orgId">
+                    <div>
+                        <div x-show="row.isHeader" class="mlist-type-header" x-text="row.type"></div>
+                        <div x-show="!row.isHeader" class="mlist-item">
+                            <div class="mlist-primary">
+                                <a href="#" @click.prevent="showMeetings(row)" x-text="row.orgName"></a>
+                            </div>
+                            <div class="mlist-secondary mlist-row">
+                                <span>
+                                    Letzte:
+                                    <template x-if="row.lastMeetingId">
+                                        <a href="#"
+                                           @click.prevent="showMeetings(row); showMeeting(allMeetings.find(m => m.id === row.lastMeetingId))"
+                                           x-text="formatDateShort(row.lastMeeting)"></a>
+                                    </template>
+                                    <template x-if="!row.lastMeetingId"><span>—</span></template>
+                                </span>
+                                <span>
+                                    Nächste:
+                                    <template x-if="row.nextMeetingId">
+                                        <a href="#"
+                                           @click.prevent="showMeetings(row); showMeeting(allMeetings.find(m => m.id === row.nextMeetingId))"
+                                           x-text="formatDateList(row.nextMeeting)"></a>
+                                    </template>
+                                    <template x-if="!row.nextMeetingId && row.futureMeetingDates?.length">
+                                        <span x-text="formatDateList(row.futureMeetingDates[0])"></span>
+                                    </template>
+                                    <template x-if="!row.nextMeetingId && !row.futureMeetingDates?.length"><span>—</span></template>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
         </section>
     </template>
 
@@ -314,7 +431,8 @@
             <!-- Sitzungen tab -->
             <div x-show="orgTab === 'meetings'">
                 <p x-show="filteredMeetings.length === 0">Keine Sitzungen gefunden.</p>
-                <table x-show="filteredMeetings.length > 0">
+                <!-- Desktop -->
+                <table x-show="filteredMeetings.length > 0 && wideList">
                     <thead><tr><th>Datum</th><th>Sitzung</th></tr></thead>
                     <tbody>
                         <template x-for="mtg in filteredMeetings" :key="mtg.id ?? ('f-' + mtg.start)">
@@ -343,13 +461,40 @@
                         </template>
                     </tbody>
                 </table>
+                <!-- Mobile -->
+                <div x-show="filteredMeetings.length > 0 && !wideList">
+                    <template x-for="mtg in filteredMeetings" :key="mtg.id ?? ('f-' + mtg.start)">
+                        <div class="mlist-item">
+                            <div class="mlist-row">
+                                <span class="mlist-primary">
+                                    <template x-if="mtg.id !== null">
+                                        <a href="#" @click.prevent="showMeeting(mtg)" x-text="mtg.name"></a>
+                                    </template>
+                                    <template x-if="mtg.id === null">
+                                        <span x-text="mtg.name + ' (geplant)'"></span>
+                                    </template>
+                                </span>
+                                <span class="mlist-secondary" style="white-space:nowrap; display:flex; align-items:center; gap:0.3em;">
+                                    <span x-text="formatDateList(mtg.start)"></span>
+                                    <template x-if="mtg.start && mtg.start > new Date().toISOString()">
+                                        <a :href="makeIcs(mtg.name, mtg.start, mtg.orgId, mtg.id, mtg.items)" download="termin.ics"
+                                           title="Termin herunterladen (.ics)"
+                                           style="text-decoration:none;">📅</a>
+                                    </template>
+                                </span>
+                            </div>
+                            <div x-show="mtg.location" class="mlist-secondary" x-text="mtg.location"></div>
+                        </div>
+                    </template>
+                </div>
             </div>
 
             <!-- Mitglieder tab -->
             <div x-show="orgTab === 'members'">
                 <p x-show="orgMembersLoading" aria-busy="true"></p>
                 <p x-show="!orgMembersLoading && orgMembers.length === 0">Keine Mitglieder gefunden.</p>
-                <table x-show="!orgMembersLoading && orgMembers.length > 0"
+                <!-- Desktop -->
+                <table x-show="!orgMembersLoading && orgMembers.length > 0 && wideList"
                        style="max-width:800px; width:100%; table-layout:fixed;">
                     <thead><tr>
                         <th style="width:200px;">Name</th>
@@ -372,6 +517,23 @@
                         </template>
                     </tbody>
                 </table>
+                <!-- Mobile -->
+                <div x-show="!orgMembersLoading && orgMembers.length > 0 && !wideList">
+                    <template x-for="m in orgMembers" :key="m.personId">
+                        <div class="mlist-item">
+                            <div class="mlist-primary" x-text="m.name"></div>
+                            <div class="mlist-secondary mlist-row">
+                                <span x-text="m.role || '—'"></span>
+                                <span>
+                                    <template x-if="m.fraction">
+                                        <a href="#" @click.prevent="showOrgByName(m.fraction)" x-text="m.fraction"></a>
+                                    </template>
+                                    <template x-if="!m.fraction"><span>—</span></template>
+                                </span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
             </div>
         </section>
     </template>
@@ -382,7 +544,8 @@
             <h2>Personen</h2>
             <p x-show="personsLoading" aria-busy="true"></p>
             <p x-show="!personsLoading && persons.length === 0">Keine Personen gefunden.</p>
-            <table x-show="!personsLoading && persons.length > 0"
+            <!-- Desktop -->
+            <table x-show="!personsLoading && persons.length > 0 && wideList"
                    style="max-width:800px; width:100%; table-layout:fixed;">
                 <thead>
                     <tr>
@@ -419,6 +582,32 @@
                     </template>
                 </tbody>
             </table>
+            <!-- Mobile -->
+            <div x-show="!personsLoading && persons.length > 0 && !wideList">
+                <template x-for="p in persons" :key="p.id">
+                    <div class="mlist-item">
+                        <div class="mlist-row">
+                            <span class="mlist-primary" x-text="p.name"></span>
+                            <span class="mlist-secondary">
+                                <template x-if="p.memberships.find(m => m.orgType === 'Fraktion/Gruppe')">
+                                    <a href="#"
+                                       @click.prevent="showOrgByName(p.memberships.find(m => m.orgType === 'Fraktion/Gruppe').orgName)"
+                                       x-text="p.memberships.find(m => m.orgType === 'Fraktion/Gruppe').orgName"></a>
+                                </template>
+                            </span>
+                        </div>
+                        <div class="mlist-secondary">
+                            <template x-for="m in p.memberships.filter(m => m.orgType !== 'Fraktion/Gruppe')" :key="m.orgId + m.role">
+                                <span>
+                                    <a href="#" @click.prevent="showOrgById(m.orgId)" x-text="m.orgName"></a>
+                                    <span x-show="m.role" x-text="' · ' + m.role"></span>
+                                    <span> · </span>
+                                </span>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </div>
         </section>
     </template>
 
@@ -432,7 +621,8 @@
                         @click="adminLoaded=false; goAdmin()">↺</button>
             </h2>
             <p x-show="adminLoading" aria-busy="true"></p>
-            <table x-show="!adminLoading && adminItems.length > 0"
+            <!-- Desktop -->
+            <table x-show="!adminLoading && adminItems.length > 0 && wideList"
                    style="width:100%; table-layout:fixed;">
                 <thead>
                     <tr>
@@ -477,141 +667,234 @@
                     </template>
                 </tbody>
             </table>
+            <!-- Mobile -->
+            <div x-show="!adminLoading && adminItems.length > 0 && !wideList">
+                <template x-for="item in adminItems" :key="item.id">
+                    <div class="mlist-item">
+                        <div class="mlist-row">
+                            <span class="mlist-primary" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 0; min-width:0;"
+                                  x-text="item.name"></span>
+                            <span style="font-size:0.72em; white-space:nowrap; flex:0 0 auto; margin-left:0.4em;">
+                                <span :style="'padding:0.15em 0.4em; border-radius:3px; background:' + (item.syncType==='to020' ? '#3a5a8a' : item.syncType==='to010' ? '#2d6a4f' : '#7b4f9e') + '; color:#fff;'"
+                                      x-text="item.syncType"></span>
+                            </span>
+                        </div>
+                        <div class="mlist-secondary mlist-row">
+                            <span>
+                                <span x-text="item.orgName || '—'"></span>
+                                <template x-if="item.meetingId">
+                                    · <a href="#" @click.prevent="openAdminMeeting(item)"
+                                         x-text="item.meetingStart ? formatDateShort(item.meetingStart) : item.meetingId"></a>
+                                </template>
+                                <span x-show="item.number"> · <span x-text="item.number"></span></span>
+                            </span>
+                            <span style="display:flex; align-items:center; gap:0.3em; flex:0 0 auto;">
+                                <template x-if="item.result">
+                                    <span :class="'result-badge result-' + item.result"
+                                          x-text="resultLabel(item.result)"></span>
+                                </template>
+                                <span x-text="new Date(item.scrapedAt).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})"></span>
+                            </span>
+                        </div>
+                    </div>
+                </template>
+            </div>
         </section>
     </template>
 
-    <!-- Meeting detail (possibly split layout) -->
+    <!-- Meeting detail -->
     <template x-if="view === 'meeting' && !loading && !query.trim()">
-        <div :class="wide ? 'split-layout' : ''">
+        <div style="height:100%; display:contents">
 
-            <!-- Agenda content -->
-            <section :class="wide ? 'split-content' : ''"
-                     :style="wide ? 'width:' + agendaWidth + 'px' : ''">
-                <hgroup style="margin-bottom:0.35rem;">
-                    <h2 style="display:flex; align-items:center; gap:0.4em; margin-bottom:0.1rem;">
-                        <a :href="(municipality?.allrisBaseUrl || '') + '/to010?SILFDNR=' + meeting.id"
-                           target="_blank" rel="noopener" x-text="meeting.name"></a>
-                        <a :href="'/md/sitzungen/' + meeting.id" target="_blank" rel="noopener"
-                           title="Markdown-Ansicht" class="md-badge">MD</a>
-                    </h2>
-                    <p style="margin:0; font-size:0.9em;">
-                        <span x-text="formatDate(meeting.start)"></span>
-                        <template x-if="meeting.location">
-                            <span> · <span x-text="meeting.location"></span></span>
-                        </template>
-                    </p>
-                </hgroup>
-
-                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.4rem; flex-wrap:wrap; gap:0.3rem;">
-                    <div class="files">
-                        <template x-for="f in (meeting.files || [])" :key="f.id">
-                            <template x-if="wide">
+            <!-- ── Desktop: split layout ── -->
+            <div x-show="wide" class="split-layout">
+                <section class="split-content" :style="'width:' + agendaWidth + 'px'">
+                    <hgroup style="margin-bottom:0.35rem;">
+                        <h2 style="display:flex; align-items:center; gap:0.4em; margin-bottom:0.1rem;">
+                            <span x-text="meeting.name"></span>
+                            <a :href="(municipality?.allrisBaseUrl || '') + '/to010?SILFDNR=' + meeting.id"
+                               target="_blank" rel="noopener" title="Im RIS öffnen" class="ris-badge">RIS</a>
+                            <a :href="'/md/sitzungen/' + meeting.id" target="_blank" rel="noopener"
+                               title="Markdown-Ansicht" class="md-badge">MD</a>
+                        </h2>
+                        <p style="margin:0; font-size:0.9em;">
+                            <span x-text="formatDate(meeting.start)"></span>
+                            <template x-if="meeting.location">
+                                <span> · <span x-text="meeting.location"></span></span>
+                            </template>
+                        </p>
+                    </hgroup>
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.4rem; flex-wrap:wrap; gap:0.3rem;">
+                        <div class="files">
+                            <template x-for="f in (meeting.files || [])" :key="f.id">
                                 <button class="outline" style="font-size:0.75em; padding:0.15em 0.5em;"
                                         @click="openPdf(f)" x-text="f.name"></button>
                             </template>
-                            <template x-if="!wide">
-                                <a :href="'/ui/proxy/file/' + f.id" target="_blank"
-                                   style="font-size:0.75em;" x-text="f.name"></a>
-                            </template>
-                        </template>
-                    </div>
-                    <label style="font-size:0.82em; white-space:nowrap; cursor:pointer; margin:0; user-select:none;">
-                        <input type="checkbox" x-model="showDetails" role="checkbox">
-                        mit Details
-                    </label>
-                </div>
-
-                <p x-show="meeting.items.length === 0">Keine Tagesordnungspunkte vorhanden.</p>
-
-                <div class="meeting-scroll-wrap" x-show="meeting.items.length > 0">
-                <table style="table-layout:fixed; width:100%;">
-                    <thead>
-                        <tr>
-                            <th style="width:5.25em; white-space:nowrap;">TOP</th>
-                            <th>Betreff</th>
-                            <th style="width:9em;">Vorlage / Dokumente</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <template x-for="item in meeting.items" :key="item.id">
-                            <tr :class="item.public ? '' : 'nonpublic'">
-                                <td x-text="item.number || '—'"></td>
-                                <td>
-                                    <a :href="(municipality?.allrisBaseUrl || '') + '/to020?TOLFDNR=' + item.id"
-                                       target="_blank" rel="noopener" x-text="item.name"></a>
-                                    <small x-show="!item.public"> (nichtöffentlich)</small>
-                                    <template x-if="item.result || (showDetails && (item.resolutionText || item.voteText || item.wordContribution))">
-                                        <div class="top-detail">
-                                            <template x-if="item.result">
-                                                <span :class="'result-badge result-' + item.result"
-                                                      x-text="resultLabel(item.result)"></span>
-                                            </template>
-                                            <div x-show="showDetails && item.voteText" class="top-section"
-                                                 x-html="(item.voteText||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
-                                            <div x-show="showDetails && item.resolutionText" class="top-section"
-                                                 x-html="(item.resolutionText||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
-                                            <div x-show="showDetails && item.wordContribution" class="top-section"
-                                                 x-html="(item.wordContribution||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
-                                        </div>
-                                    </template>
-                                </td>
-                                <td>
-                                    <div x-show="item.paper?.reference" x-text="item.paper?.reference"
-                                         style="font-size:0.85em; margin-bottom:0.25rem;"></div>
-                                    <div class="files" x-show="item.paper?.files?.length">
-                                        <template x-for="file in (item.paper?.files || [])" :key="file.id">
-                                            <a :href="proxyUrl(file.id)"
-                                               target="_blank"
-                                               @click="wide && ($event.preventDefault(), openPdf(file))"
-                                               x-text="file.name"
-                                               :style="activePdfId === file.id ? 'font-weight:600' : ''"></a>
-                                        </template>
-                                    </div>
-                                    <div class="files" x-show="item.files?.length">
-                                        <template x-for="file in (item.files || [])" :key="file.id">
-                                            <a :href="proxyUrl(file.id)"
-                                               target="_blank"
-                                               @click="wide && ($event.preventDefault(), openPdf(file))"
-                                               x-text="file.name"
-                                               :style="activePdfId === file.id ? 'font-weight:600' : ''"
-                                               style="font-style:italic"></a>
-                                        </template>
-                                    </div>
-                                </td>
-                            </tr>
-                        </template>
-                    </tbody>
-                </table>
-                </div><!-- meeting-scroll-wrap -->
-            </section>
-
-            <!-- Drag handle (wide only) -->
-            <div x-show="wide" class="split-handle"
-                 @mousedown.prevent="startResize($event)"
-                 title="Breite anpassen"></div>
-
-            <!-- PDF panel (wide only) -->
-            <aside x-show="wide" class="split-pdf">
-                <div x-show="pdfLoading" class="pdf-loading-overlay">
-                    <div class="pdf-spinner"></div>
-                </div>
-                <template x-if="activePdfUrl">
-                    <div style="display:flex; flex-direction:column; height:100%;">
-                        <div x-show="activePdfSourceUrl" style="padding:0.2rem 0.4rem; font-size:0.72em; color:var(--pico-muted-color); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:0 0 auto;">
-                            Quelle: <a :href="activePdfSourceUrl" target="_blank" rel="noopener"
-                                       x-text="activePdfSourceLabel || activePdfSourceUrl" style="color:inherit;"></a>
                         </div>
-                        <iframe :src="activePdfUrl" @load="pdfLoading = false" title="Dokument"
-                                style="flex:1 1 auto; min-height:0;"></iframe>
+                        <label style="font-size:0.82em; white-space:nowrap; cursor:pointer; margin:0; user-select:none;">
+                            <input type="checkbox" x-model="showDetails" role="checkbox"> mit Details
+                        </label>
+                    </div>
+                    <p x-show="meeting.items.length === 0">Keine Tagesordnungspunkte vorhanden.</p>
+                    <div class="meeting-scroll-wrap" x-show="meeting.items.length > 0">
+                    <table style="table-layout:fixed; width:100%;">
+                        <thead>
+                            <tr>
+                                <th style="width:5.25em; white-space:nowrap;">TOP</th>
+                                <th>Betreff</th>
+                                <th style="width:9em;">Vorlage / Dokumente</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="item in meeting.items" :key="item.id">
+                                <tr :class="item.public ? '' : 'nonpublic'">
+                                    <td x-text="item.number || '—'"></td>
+                                    <td>
+                                        <span x-text="item.name"></span>
+                                        <a :href="(municipality?.allrisBaseUrl || '') + '/to020?TOLFDNR=' + item.id"
+                                           target="_blank" rel="noopener" title="Im RIS öffnen" class="ris-badge">RIS</a>
+                                        <small x-show="!item.public"> (nichtöffentlich)</small>
+                                        <template x-if="item.result || (showDetails && (item.resolutionText || item.voteText || item.wordContribution))">
+                                            <div class="top-detail">
+                                                <template x-if="item.result">
+                                                    <span :class="'result-badge result-' + item.result"
+                                                          x-text="resultLabel(item.result)"></span>
+                                                </template>
+                                                <div x-show="showDetails && item.voteText" class="top-section"
+                                                     x-html="(item.voteText||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
+                                                <div x-show="showDetails && item.resolutionText" class="top-section"
+                                                     x-html="(item.resolutionText||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
+                                                <div x-show="showDetails && item.wordContribution" class="top-section"
+                                                     x-html="(item.wordContribution||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
+                                            </div>
+                                        </template>
+                                    </td>
+                                    <td>
+                                        <div x-show="item.paper?.reference" x-text="item.paper?.reference"
+                                             style="font-size:0.85em; margin-bottom:0.25rem;"></div>
+                                        <div class="files" x-show="item.paper?.files?.length">
+                                            <template x-for="file in (item.paper?.files || [])" :key="file.id">
+                                                <a :href="proxyUrl(file.id)" target="_blank"
+                                                   @click="$event.preventDefault(); openPdf(file)"
+                                                   x-text="file.name"
+                                                   :style="activePdfId === file.id ? 'font-weight:600' : ''"></a>
+                                            </template>
+                                        </div>
+                                        <div class="files" x-show="item.files?.length">
+                                            <template x-for="file in (item.files || [])" :key="file.id">
+                                                <a :href="proxyUrl(file.id)" target="_blank"
+                                                   @click="$event.preventDefault(); openPdf(file)"
+                                                   x-text="file.name"
+                                                   :style="activePdfId === file.id ? 'font-weight:600' : ''"
+                                                   style="font-style:italic"></a>
+                                            </template>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                    </div><!-- meeting-scroll-wrap -->
+                </section>
+                <div class="split-handle" @mousedown.prevent="startResize($event)" title="Breite anpassen"></div>
+                <aside class="split-pdf">
+                    <div x-show="pdfLoading" class="pdf-loading-overlay">
+                        <div class="pdf-spinner"></div>
+                    </div>
+                    <template x-if="activePdfUrl">
+                        <div style="display:flex; flex-direction:column; height:100%;">
+                            <div x-show="activePdfSourceUrl" style="padding:0.2rem 0.4rem; font-size:0.72em; color:var(--pico-muted-color); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:0 0 auto;">
+                                Quelle: <a :href="activePdfSourceUrl" target="_blank" rel="noopener"
+                                           x-text="activePdfSourceLabel || activePdfSourceUrl" style="color:inherit;"></a>
+                            </div>
+                            <iframe :src="activePdfUrl" @load="pdfLoading = false" title="Dokument"
+                                    style="flex:1 1 auto; min-height:0;"></iframe>
+                        </div>
+                    </template>
+                    <template x-if="!activePdfUrl">
+                        <div class="pdf-placeholder">
+                            Dokument auswählen<br>
+                            <small>Klick auf einen Dateinamen öffnet die PDF hier</small>
+                        </div>
+                    </template>
+                </aside>
+            </div>
+
+            <!-- ── Mobile: section-based layout ── -->
+            <div x-show="!wide">
+
+                <!-- Sticky mini-header -->
+                <div class="mobile-header">
+                    <div class="mobile-header-top">
+                        <a href="#" @click.prevent="goMeetings()" class="mobile-header-back">
+                            ← <span x-text="selectedOrg?.orgName || 'Zurück'"></span>
+                        </a>
+                        <span class="mobile-header-date"
+                              x-text="meeting.start ? formatDateShort(meeting.start) : ''"></span>
+                    </div>
+                    <div class="mobile-header-mid" x-text="meeting.name"></div>
+                    <div class="mobile-header-bottom">
+                        <div class="files">
+                            <template x-for="f in (meeting.files || [])" :key="f.id">
+                                <a :href="proxyUrl(f.id)" target="_blank"
+                                   style="font-size:0.8em;" x-text="f.name"></a>
+                            </template>
+                        </div>
+                        <label style="font-size:0.82em; white-space:nowrap; margin:0; cursor:pointer; user-select:none;">
+                            <input type="checkbox" x-model="showDetails" role="checkbox"> mit Details
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Agenda sections -->
+                <p x-show="meeting.items.length === 0" style="padding-top:0.75rem;">
+                    Keine Tagesordnungspunkte vorhanden.
+                </p>
+                <template x-for="item in meeting.items" :key="item.id">
+                    <div :class="'mobile-top' + (item.public ? '' : ' nonpublic')">
+                        <div class="mobile-top-row">
+                            <span class="mobile-top-num" x-text="item.number || '—'"></span>
+                            <div class="mobile-top-main">
+                                <span x-text="item.name"></span>
+                                <a :href="(municipality?.allrisBaseUrl || '') + '/to020?TOLFDNR=' + item.id"
+                                   target="_blank" rel="noopener" title="Im RIS öffnen" class="ris-badge">RIS</a>
+                                <small x-show="!item.public"> (nichtöffentlich)</small>
+                                <template x-if="item.result">
+                                    <span :class="'result-badge result-' + item.result"
+                                          x-text="resultLabel(item.result)"></span>
+                                </template>
+                            </div>
+                        </div>
+                        <!-- Paper ref + files -->
+                        <div class="mobile-top-sub"
+                             x-show="item.paper?.reference || item.paper?.files?.length || item.files?.length">
+                            <span x-show="item.paper?.reference" x-text="item.paper?.reference"
+                                  style="display:block; font-size:0.8em; color:var(--pico-muted-color); margin-bottom:0.15rem;"></span>
+                            <div class="files">
+                                <template x-for="f in (item.paper?.files || [])" :key="f.id">
+                                    <a :href="proxyUrl(f.id)" target="_blank"
+                                       style="font-size:0.85em;" x-text="f.name"></a>
+                                </template>
+                                <template x-for="f in (item.files || [])" :key="f.id">
+                                    <a :href="proxyUrl(f.id)" target="_blank"
+                                       style="font-size:0.85em; font-style:italic;" x-text="f.name"></a>
+                                </template>
+                            </div>
+                        </div>
+                        <!-- Detail texts -->
+                        <div class="mobile-top-sub top-section"
+                             x-show="showDetails && (item.voteText || item.resolutionText || item.wordContribution)">
+                            <div x-show="item.voteText"
+                                 x-html="(item.voteText||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
+                            <div x-show="item.resolutionText"
+                                 x-html="(item.resolutionText||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
+                            <div x-show="item.wordContribution"
+                                 x-html="(item.wordContribution||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
+                        </div>
                     </div>
                 </template>
-                <template x-if="!activePdfUrl">
-                    <div class="pdf-placeholder">
-                        Dokument auswählen<br>
-                        <small>Klick auf einen Dateinamen öffnet die PDF hier</small>
-                    </div>
-                </template>
-            </aside>
+            </div>
+
         </div>
     </template>
 </main>
@@ -646,6 +929,7 @@ function app() {
 
         showDetails: false,
         wide: window.innerWidth > 1024,
+        wideList: window.innerWidth > 640,
         agendaWidth: 700,
         activePdfUrl: null,
         activePdfId: null,
@@ -661,6 +945,7 @@ function app() {
         async init() {
             window.addEventListener('resize', () => {
                 this.wide = window.innerWidth > 1024;
+                this.wideList = window.innerWidth > 640;
             });
 
             this.loading = true;
