@@ -21,6 +21,7 @@ _SCRAPER_UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 oparl-bridge/0.1"
 )
+_WIKIDATA_UA = "oparl-bridge/1.0 (https://github.com/aeroid/oparl-bridge)"
 
 
 def _top_sort_key(number: str | None) -> tuple[int, int, int]:
@@ -226,7 +227,7 @@ async def ui_municipality():
     url = f"https://www.wikidata.org/wiki/Special:EntityData/{qid}.json"
     try:
         async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-            r = await client.get(url, headers={"User-Agent": "oparl-bridge/1.0"})
+            r = await client.get(url, headers={"User-Agent": _WIKIDATA_UA})
             r.raise_for_status()
             data = r.json()
     except Exception as exc:
