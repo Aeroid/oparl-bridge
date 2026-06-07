@@ -1,0 +1,1348 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bürgerinformation</title>
+    <link rel="alternate" type="text/markdown" href="/md/" title="Markdown-Index">
+    <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM-Index">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+    <style>
+        html { font-size: 75%; }
+        [x-cloak] { display: none !important; }
+
+        :root { --pico-container-max-width: 100%; }
+        body > header, body > main, body > footer {
+            max-width: 100%;
+            padding-inline: 1rem;
+        }
+        body > main { padding-block-end: 0; }
+        @media (min-width: 1025px) {
+            html, body { height: 100%; }
+            body { display: flex; flex-direction: column; }
+            body > main { flex: 1 1 0; min-height: 0; overflow: hidden; }
+        }
+        .container-fluid { padding-inline: 0.75rem; }
+
+        .breadcrumb {
+            display: flex; gap: 0.4rem; align-items: center;
+            flex-wrap: wrap; justify-content: flex-start;
+        }
+        .breadcrumb .sep { color: var(--pico-muted-color); }
+        .nonpublic td { color: var(--pico-muted-color); }
+        .files { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        .files a, .files button { font-size: 0.85em; }
+
+        mark { background: #fff3cd; padding: 0 2px; border-radius: 2px; }
+
+        .top-section { color: var(--pico-muted-color); font-style: italic; display: flex; flex-direction: column; gap: 0.55em; }
+        .top-section p { margin: 0; }
+        .top-section p:first-child { font-weight: 600; font-style: normal; margin-bottom: -0.55em; }
+
+        .result-badge {
+            display: inline-block; font-size: 0.7em; font-weight: 600;
+            padding: 1px 6px; border-radius: 3px; white-space: nowrap;
+            vertical-align: middle; margin-left: 0.3em;
+        }
+        .result-ACCEPTED  { background: #d4edda; color: #155724; }
+        .result-REJECTED  { background: #f8d7da; color: #721c24; }
+        .result-DEFERRED  { background: #fff3cd; color: #856404; }
+        .result-NODECISION{ background: #e2e3e5; color: #383d41; }
+
+        .top-detail { font-size: 0.85em; color: var(--pico-muted-color); margin-top: 0.3rem; }
+        .top-detail p { margin: 0.15rem 0; }
+
+        .md-badge, .ris-badge {
+            display: inline-block; font-size: 0.55em; font-weight: 700; line-height: 1;
+            padding: 2px 5px; border-radius: 3px; vertical-align: middle;
+            background: var(--pico-muted-border-color); color: var(--pico-muted-color);
+            text-decoration: none; letter-spacing: 0.03em; flex-shrink: 0;
+        }
+        .md-badge:hover { background: var(--pico-primary); color: #fff; }
+        .ris-badge:hover { background: #c05c00; color: #fff; }
+
+        /* Split layout — flex so drag handle can resize the PDF panel */
+        .split-layout {
+            display: flex;
+            height: 100%;
+            overflow: hidden;
+        }
+        .split-content { flex: 0 0 auto; overflow: hidden; display: flex; flex-direction: column; min-width: 300px; }
+        @media (min-width: 1025px) {
+            .meeting-scroll-wrap { overflow-y: auto; }
+            .split-content .meeting-scroll-wrap { flex: 1 1 0; min-height: 0; }
+            .meeting-scroll-wrap thead th { position: sticky; top: 0; z-index: 1; background: var(--pico-background-color, #fff); }
+        }
+        .split-handle {
+            flex: 0 0 5px;
+            cursor: col-resize;
+            background: var(--pico-muted-border-color);
+            margin: 0 2px;
+            border-radius: 2px;
+            transition: background 0.15s;
+        }
+        .split-handle:hover { background: var(--pico-primary); }
+        .split-pdf { position: relative; flex: 1 1 auto; min-width: 300px; overflow: hidden; }
+        .pdf-loading-overlay {
+            position: absolute; inset: 0; z-index: 10;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(255,255,255,0.75);
+            border-radius: var(--pico-border-radius);
+        }
+        .pdf-spinner {
+            width: 2.8rem; height: 2.8rem;
+            border: 3px solid var(--pico-muted-border-color);
+            border-top-color: var(--pico-primary);
+            border-radius: 50%;
+            animation: spin 0.75s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .split-pdf iframe {
+            width: 100%;
+            height: 100%;
+            border: 1px solid var(--pico-muted-border-color);
+            border-radius: var(--pico-border-radius);
+            background: #f5f5f5;
+        }
+        .split-pdf .pdf-placeholder {
+            width: 100%; height: 100%;
+            display: flex; align-items: center; justify-content: center;
+            border: 1px dashed var(--pico-muted-border-color);
+            border-radius: var(--pico-border-radius);
+            color: var(--pico-muted-color);
+            font-size: 0.9em; text-align: center; padding: 2rem;
+        }
+
+        footer { margin-top: 3rem; padding-top: 1rem;
+                 border-top: 1px solid var(--pico-muted-border-color); }
+        td { vertical-align: top; }
+        table { border-collapse: collapse; }
+        thead tr { border-bottom: 1px solid var(--pico-muted-border-color); }
+        tbody tr { border-bottom: none; }
+        tbody tr:nth-child(even) td, tbody tr:nth-child(even) th { background-color: #f0f0f0; }
+        tbody tr:nth-child(odd) td, tbody tr:nth-child(odd) th { background-color: transparent; }
+        input[type=search] { margin-bottom: 0; }
+        .search-result-meta { font-size: 0.8em; color: var(--pico-muted-color); }
+
+        .tab-nav { display: flex; justify-content: flex-start; gap: 1.5rem; border-bottom: 1px solid var(--pico-muted-border-color); margin-bottom: 1rem; }
+        .tab-nav a { padding-bottom: 0.4rem; text-decoration: none; color: var(--pico-muted-color); border-bottom: 2px solid transparent; }
+        .tab-nav a.active { color: var(--pico-color); border-bottom-color: var(--pico-primary); font-weight: 600; }
+
+        /* ── Mobile meeting layout ── */
+        .mobile-header {
+            position: sticky; top: 0; z-index: 5;
+            background: var(--pico-background-color, #fff);
+            border-bottom: 1px solid var(--pico-muted-border-color);
+            padding: 0.45rem 1rem;
+            margin: 0 -1rem;
+        }
+        .mobile-header-top {
+            display: flex; align-items: baseline;
+            gap: 0.5rem; justify-content: space-between;
+        }
+        .mobile-header-back {
+            font-size: 0.83em; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; flex: 1 1 0; min-width: 0;
+        }
+        .mobile-header-date {
+            font-size: 0.8em; color: var(--pico-muted-color);
+            white-space: nowrap; flex: 0 0 auto;
+        }
+        .mobile-header-mid {
+            font-size: 0.85em; font-weight: 600; margin-top: 0.1rem;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .mobile-header-bottom {
+            display: flex; align-items: center;
+            justify-content: space-between; gap: 0.5rem; margin-top: 0.2rem;
+        }
+        .mobile-top {
+            padding: 0.6rem 0;
+            border-bottom: 1px solid var(--pico-muted-border-color);
+        }
+        .mobile-top:last-child { border-bottom: none; }
+        .mobile-top-row { display: flex; gap: 0.5rem; align-items: flex-start; }
+        .mobile-top-num {
+            flex: 0 0 3.4em; font-size: 0.75em; font-weight: 600;
+            color: var(--pico-muted-color); padding-top: 0.2em; white-space: nowrap;
+        }
+        .mobile-top-main { flex: 1 1 0; min-width: 0; }
+        .mobile-top-sub { margin-left: 3.9em; margin-top: 0.25rem; }
+        .nonpublic .mobile-top-row { color: var(--pico-muted-color); }
+
+        /* ── Shared mobile list ── */
+        .mlist-type-header {
+            padding: 1.2rem 0 0.25rem;
+            font-size: 0.75em; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.05em;
+            color: var(--pico-muted-color);
+            border-top: 1px solid var(--pico-muted-border-color);
+        }
+        .mlist-type-header:first-child { border-top: none; padding-top: 0.4rem; }
+        .mlist-item {
+            display: flex; flex-direction: column; gap: 0.1rem;
+            padding: 0.55rem 0;
+            border-bottom: 1px solid var(--pico-muted-border-color);
+        }
+        .mlist-item:last-child { border-bottom: none; }
+        .mlist-primary { font-size: 0.93em; }
+        .mlist-secondary { font-size: 0.8em; color: var(--pico-muted-color); }
+        .mlist-row { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+    </style>
+</head>
+<body x-data="app()" x-init="init()" x-cloak>
+
+<header class="container-fluid">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;">
+        <div style="display:flex; align-items:center; gap:0.75rem; flex:1 1 auto;">
+            <a x-show="municipality?.wappenUrl" :href="municipality?.wikidataUrl"
+               target="_blank" rel="noopener" style="flex:0 0 auto; line-height:0;"
+               title="Wikidata">
+                <img :src="municipality?.wappenUrl" style="height:52px; width:auto;"
+                     alt="Wappen">
+            </a>
+            <hgroup style="margin:0;">
+                <h1 x-text="body ? body.name : (body?.systemName || 'Bürgerinformation')"></h1>
+                <p x-show="body" style="margin:0; display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap;">
+                    <span x-text="body?.systemName || 'Bürgerinformationssystem'"></span>
+                    <span style="color:var(--pico-muted-color)">·</span>
+                    <a :href="body?.website" target="_blank" x-text="body?.website"></a>
+                    <template x-if="municipality?.wikipediaUrl">
+                        <span style="color:var(--pico-muted-color)">·</span>
+                    </template>
+                    <template x-if="municipality?.wikipediaUrl">
+                        <a :href="municipality.wikipediaUrl" target="_blank" rel="noopener">Wikipedia</a>
+                    </template>
+                    <template x-if="municipality?.population">
+                        <span style="color:var(--pico-muted-color); font-size:0.85em;"
+                              x-text="municipality.population.toLocaleString('de-DE') + ' Einw.'"></span>
+                    </template>
+                </p>
+            </hgroup>
+        </div>
+        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:0.25rem; flex:0 0 auto;">
+            <input type="search" placeholder="Betreffsuche… z.B. Bahn Fahrrad" x-model="query"
+                   @input="onSearch()" style="width:min(22rem, 100%); margin:0;"
+                   :disabled="!allLoaded">
+            <div style="font-size:0.75em; display:flex; gap:0.5rem;">
+                <a href="/oparl/v1.1" target="_blank">OParl API</a>
+                <span style="color:var(--pico-muted-color)">·</span>
+                <a href="/docs" target="_blank">API Docs</a>
+                <span style="color:var(--pico-muted-color)">·</span>
+                <a href="#" @click.prevent="goAdmin()">Admin</a>
+            </div>
+        </div>
+    </div>
+    <nav class="breadcrumb" aria-label="Breadcrumb" style="margin-top:0.5rem;">
+        <a href="#" @click.prevent="goOrgs()">Gremien</a>
+        <span class="sep">·</span>
+        <a href="#" @click.prevent="goPersons()">Personen</a>
+        <template x-if="selectedOrg && (view === 'meetings' || view === 'meeting')">
+            <span class="sep">›</span>
+        </template>
+        <template x-if="selectedOrg && view === 'meetings'">
+            <span x-text="selectedOrg.orgName"></span>
+        </template>
+        <template x-if="selectedOrg && view === 'meeting'">
+            <a href="#" @click.prevent="goMeetings()" x-text="selectedOrg.orgName"></a>
+        </template>
+        <template x-if="meeting">
+            <span class="sep">›</span>
+        </template>
+        <template x-if="meeting">
+            <span x-text="meeting.name + (meeting.start ? ' (' + formatDateShort(meeting.start) + ')' : '')"></span>
+        </template>
+    </nav>
+</header>
+
+<main class="container-fluid">
+    <div x-show="loading" aria-busy="true" style="text-align:center;padding:2rem;"></div>
+
+    <!-- Search results -->
+    <template x-if="query.trim() && !loading">
+        <section>
+            <p x-show="searchResults.length === 0">Keine Ergebnisse für „<span x-text="query"></span>".</p>
+            <!-- Desktop -->
+            <table x-show="searchResults.length > 0 && wideList">
+                <thead>
+                    <tr><th>Sitzung</th><th>Gremium</th><th>TOP</th><th>Betreff</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="r in searchResults" :key="r.key">
+                        <tr style="cursor:pointer" @click="openSearchResult(r)">
+                            <td style="white-space:nowrap" x-text="formatDateList(r.start)"></td>
+                            <td x-text="r.orgName"></td>
+                            <td x-text="r.number || '—'"></td>
+                            <td>
+                                <span x-html="highlight(r.name)"></span>
+                                <template x-if="r.paperRef">
+                                    <small class="search-result-meta"> · <span x-html="highlight(r.paperRef)"></span></small>
+                                </template>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <!-- Mobile -->
+            <div x-show="searchResults.length > 0 && !wideList">
+                <template x-for="r in searchResults" :key="r.key">
+                    <div class="mlist-item" style="cursor:pointer" @click="openSearchResult(r)">
+                        <div class="mlist-row">
+                            <span class="mlist-primary" x-html="highlight(r.name)"></span>
+                            <span class="mlist-secondary" style="white-space:nowrap" x-text="r.number || ''"></span>
+                        </div>
+                        <div class="mlist-secondary mlist-row">
+                            <span x-text="r.orgName"></span>
+                            <span x-text="formatDateList(r.start)"></span>
+                        </div>
+                        <div x-show="r.paperRef" class="mlist-secondary"
+                             x-html="highlight(r.paperRef)"></div>
+                    </div>
+                </template>
+            </div>
+        </section>
+    </template>
+
+    <!-- Organisations -->
+    <template x-if="view === 'orgs' && !loading && !query.trim()">
+        <section>
+            <!-- Desktop -->
+            <table x-show="wideList" style="max-width:800px; width:100%; table-layout:fixed;">
+                <thead>
+                    <tr>
+                        <th>Organisation</th>
+                        <th style="width:155px; white-space:nowrap;">Letzte Sitzung</th>
+                        <th style="width:175px; white-space:nowrap;">Nächste Sitzung</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="row in flatOrgRows" :key="row.isHeader ? 'h-'+row.type : row.orgId">
+                        <tr>
+                            <!-- Gruppenüberschrift -->
+                            <td x-show="row.isHeader" colspan="3"
+                                style="padding-top:2.5rem; padding-bottom:0.2rem;
+                                       border-top:1px solid var(--pico-muted-border-color); border-bottom:none;
+                                       background:#fff;
+                                       font-size:0.8em; font-weight:600;
+                                       text-transform:uppercase; letter-spacing:0.05em;"
+                                x-text="row.type"></td>
+                            <!-- Org-Zeile -->
+                            <td x-show="!row.isHeader">
+                                <a href="#" @click.prevent="showMeetings(row)"
+                                   x-text="row.orgName"></a>
+                            </td>
+                            <td x-show="!row.isHeader" style="white-space:nowrap">
+                                <template x-if="!row.isHeader && row.lastMeetingId">
+                                    <a href="#"
+                                       @click.prevent="showMeetings(row); showMeeting(allMeetings.find(m => m.id === row.lastMeetingId))"
+                                       x-text="formatDateShort(row.lastMeeting)"></a>
+                                </template>
+                                <template x-if="!row.isHeader && !row.lastMeetingId">
+                                    <span>—</span>
+                                </template>
+                            </td>
+                            <td x-show="!row.isHeader" style="white-space:nowrap">
+                                <template x-if="!row.isHeader && row.nextMeetingId">
+                                    <span>
+                                        <a href="#"
+                                           @click.prevent="showMeetings(row); showMeeting(allMeetings.find(m => m.id === row.nextMeetingId))"
+                                           x-text="formatDateList(row.nextMeeting)"></a>
+                                        <a :href="makeIcs(row.orgName, row.nextMeeting, row.orgId, row.nextMeetingId, null)" download="termin.ics"
+                                           title="Termin herunterladen (.ics)"
+                                           style="margin-left:.35em; text-decoration:none; font-size:.85em">📅</a>
+                                    </span>
+                                </template>
+                                <template x-if="!row.isHeader && !row.nextMeetingId && row.futureMeetingDates?.length">
+                                    <span>
+                                        <span x-text="formatDateList(row.futureMeetingDates[0])"></span>
+                                        <a :href="makeIcs(row.orgName, row.futureMeetingDates[0], row.orgId, null, null)" download="termin.ics"
+                                           title="Termin herunterladen (.ics)"
+                                           style="margin-left:.35em; text-decoration:none; font-size:.85em">📅</a>
+                                    </span>
+                                </template>
+                                <template x-if="!row.isHeader && !row.nextMeetingId && !row.futureMeetingDates?.length">
+                                    <span>—</span>
+                                </template>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <!-- Mobile -->
+            <div x-show="!wideList">
+                <template x-for="row in flatOrgRows" :key="row.isHeader ? 'h-'+row.type : row.orgId">
+                    <div>
+                        <div x-show="row.isHeader" class="mlist-type-header" x-text="row.type"></div>
+                        <div x-show="!row.isHeader" class="mlist-item">
+                            <div class="mlist-primary">
+                                <a href="#" @click.prevent="showMeetings(row)" x-text="row.orgName"></a>
+                            </div>
+                            <div class="mlist-secondary mlist-row">
+                                <span>
+                                    Letzte:
+                                    <template x-if="row.lastMeetingId">
+                                        <a href="#"
+                                           @click.prevent="showMeetings(row); showMeeting(allMeetings.find(m => m.id === row.lastMeetingId))"
+                                           x-text="formatDateShort(row.lastMeeting)"></a>
+                                    </template>
+                                    <template x-if="!row.lastMeetingId"><span>—</span></template>
+                                </span>
+                                <span>
+                                    Nächste:
+                                    <template x-if="row.nextMeetingId">
+                                        <a href="#"
+                                           @click.prevent="showMeetings(row); showMeeting(allMeetings.find(m => m.id === row.nextMeetingId))"
+                                           x-text="formatDateList(row.nextMeeting)"></a>
+                                    </template>
+                                    <template x-if="!row.nextMeetingId && row.futureMeetingDates?.length">
+                                        <span x-text="formatDateList(row.futureMeetingDates[0])"></span>
+                                    </template>
+                                    <template x-if="!row.nextMeetingId && !row.futureMeetingDates?.length"><span>—</span></template>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </section>
+    </template>
+
+    <!-- Meetings list -->
+    <template x-if="view === 'meetings' && !loading && !query.trim()">
+        <section>
+            <h2 style="display:flex; align-items:center; gap:0.4em;">
+                <span x-text="selectedOrg?.orgName"></span>
+                <a :href="'/md/gremien/' + selectedOrg.orgId" target="_blank" rel="noopener"
+                   title="Markdown-Ansicht" class="md-badge">MD</a>
+            </h2>
+
+            <nav class="tab-nav">
+                <a href="#" @click.prevent="orgTab='meetings'"
+                   :class="orgTab==='meetings' ? 'active' : ''">
+                    Sitzungen (<span x-text="meetings.length"></span>)
+                </a>
+                <a href="#" @click.prevent="loadOrgMembers()"
+                   :class="orgTab==='members' ? 'active' : ''">
+                    Mitglieder<span x-show="orgMembers.length"> (<span x-text="orgMembers.length"></span>)</span>
+                </a>
+            </nav>
+
+            <!-- Sitzungen tab -->
+            <div x-show="orgTab === 'meetings'">
+                <p x-show="filteredMeetings.length === 0">Keine Sitzungen gefunden.</p>
+                <!-- Desktop -->
+                <table x-show="filteredMeetings.length > 0 && wideList">
+                    <thead><tr><th>Datum</th><th>Sitzung</th></tr></thead>
+                    <tbody>
+                        <template x-for="mtg in filteredMeetings" :key="mtg.id ?? ('f-' + mtg.start)">
+                            <tr>
+                                <td style="white-space:nowrap">
+                                    <span x-text="formatDateList(mtg.start)"></span>
+                                    <template x-if="mtg.start && mtg.start > new Date().toISOString()">
+                                        <a :href="makeIcs(mtg.name, mtg.start, mtg.orgId, mtg.id, mtg.items)" download="termin.ics"
+                                           title="Termin herunterladen (.ics)"
+                                           style="margin-left:.35em; text-decoration:none; font-size:.85em">📅</a>
+                                    </template>
+                                </td>
+                                <td>
+                                    <template x-if="mtg.id !== null">
+                                        <a href="#" @click.prevent="showMeeting(mtg)"
+                                           x-text="mtg.name"></a>
+                                    </template>
+                                    <template x-if="mtg.id === null">
+                                        <span x-text="mtg.name + ' (geplant)'"></span>
+                                    </template>
+                                    <small x-show="mtg.location">
+                                        · <span x-text="mtg.location"></span>
+                                    </small>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <!-- Mobile -->
+                <div x-show="filteredMeetings.length > 0 && !wideList">
+                    <template x-for="mtg in filteredMeetings" :key="mtg.id ?? ('f-' + mtg.start)">
+                        <div class="mlist-item">
+                            <div class="mlist-row">
+                                <span class="mlist-primary">
+                                    <template x-if="mtg.id !== null">
+                                        <a href="#" @click.prevent="showMeeting(mtg)" x-text="mtg.name"></a>
+                                    </template>
+                                    <template x-if="mtg.id === null">
+                                        <span x-text="mtg.name + ' (geplant)'"></span>
+                                    </template>
+                                </span>
+                                <span class="mlist-secondary" style="white-space:nowrap; display:flex; align-items:center; gap:0.3em;">
+                                    <span x-text="formatDateList(mtg.start)"></span>
+                                    <template x-if="mtg.start && mtg.start > new Date().toISOString()">
+                                        <a :href="makeIcs(mtg.name, mtg.start, mtg.orgId, mtg.id, mtg.items)" download="termin.ics"
+                                           title="Termin herunterladen (.ics)"
+                                           style="text-decoration:none;">📅</a>
+                                    </template>
+                                </span>
+                            </div>
+                            <div x-show="mtg.location" class="mlist-secondary" x-text="mtg.location"></div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Mitglieder tab -->
+            <div x-show="orgTab === 'members'">
+                <p x-show="orgMembersLoading" aria-busy="true"></p>
+                <p x-show="!orgMembersLoading && orgMembers.length === 0">Keine Mitglieder gefunden.</p>
+                <!-- Desktop -->
+                <table x-show="!orgMembersLoading && orgMembers.length > 0 && wideList"
+                       style="max-width:800px; width:100%; table-layout:fixed;">
+                    <thead><tr>
+                        <th style="width:200px;">Name</th>
+                        <th style="width:180px;">Funktion</th>
+                        <th>Fraktion/Gruppe</th>
+                    </tr></thead>
+                    <tbody>
+                        <template x-for="m in orgMembers" :key="m.personId">
+                            <tr>
+                                <td x-text="m.name"></td>
+                                <td x-text="m.role || '—'"></td>
+                                <td>
+                                    <template x-if="m.fraction">
+                                        <a href="#" @click.prevent="showOrgByName(m.fraction)"
+                                           x-text="m.fraction"></a>
+                                    </template>
+                                    <template x-if="!m.fraction"><span>—</span></template>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <!-- Mobile -->
+                <div x-show="!orgMembersLoading && orgMembers.length > 0 && !wideList">
+                    <template x-for="m in orgMembers" :key="m.personId">
+                        <div class="mlist-item">
+                            <div class="mlist-primary" x-text="m.name"></div>
+                            <div class="mlist-secondary mlist-row">
+                                <span x-text="m.role || '—'"></span>
+                                <span>
+                                    <template x-if="m.fraction">
+                                        <a href="#" @click.prevent="showOrgByName(m.fraction)" x-text="m.fraction"></a>
+                                    </template>
+                                    <template x-if="!m.fraction"><span>—</span></template>
+                                </span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </section>
+    </template>
+
+    <!-- Persons overview -->
+    <template x-if="view === 'persons' && !loading && !query.trim()">
+        <section>
+            <h2>Personen</h2>
+            <p x-show="personsLoading" aria-busy="true"></p>
+            <p x-show="!personsLoading && persons.length === 0">Keine Personen gefunden.</p>
+            <!-- Desktop -->
+            <table x-show="!personsLoading && persons.length > 0 && wideList"
+                   style="max-width:800px; width:100%; table-layout:fixed;">
+                <thead>
+                    <tr>
+                        <th style="width:200px;">Name</th>
+                        <th style="width:200px;">Fraktion/Gruppe</th>
+                        <th>Gremien</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="p in persons" :key="p.id">
+                        <tr>
+                            <td x-text="p.name"></td>
+                            <td style="white-space:nowrap">
+                                <template x-if="p.memberships.find(m => m.orgType === 'Fraktion/Gruppe')">
+                                    <a href="#"
+                                       @click.prevent="showOrgByName(p.memberships.find(m => m.orgType === 'Fraktion/Gruppe').orgName)"
+                                       x-text="p.memberships.find(m => m.orgType === 'Fraktion/Gruppe').orgName"></a>
+                                </template>
+                                <template x-if="!p.memberships.find(m => m.orgType === 'Fraktion/Gruppe')">
+                                    <span>—</span>
+                                </template>
+                            </td>
+                            <td>
+                                <template x-for="m in p.memberships.filter(m => m.orgType !== 'Fraktion/Gruppe')" :key="m.orgId + m.role">
+                                    <div>
+                                        <a href="#" @click.prevent="showOrgById(m.orgId)"
+                                           x-text="m.orgName"></a>
+                                        <small x-show="m.role" style="color:var(--pico-muted-color)"
+                                               x-text="' · ' + m.role"></small>
+                                    </div>
+                                </template>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <!-- Mobile -->
+            <div x-show="!personsLoading && persons.length > 0 && !wideList">
+                <template x-for="p in persons" :key="p.id">
+                    <div class="mlist-item">
+                        <div class="mlist-row">
+                            <span class="mlist-primary" x-text="p.name"></span>
+                            <span class="mlist-secondary">
+                                <template x-if="p.memberships.find(m => m.orgType === 'Fraktion/Gruppe')">
+                                    <a href="#"
+                                       @click.prevent="showOrgByName(p.memberships.find(m => m.orgType === 'Fraktion/Gruppe').orgName)"
+                                       x-text="p.memberships.find(m => m.orgType === 'Fraktion/Gruppe').orgName"></a>
+                                </template>
+                            </span>
+                        </div>
+                        <div class="mlist-secondary">
+                            <template x-for="m in p.memberships.filter(m => m.orgType !== 'Fraktion/Gruppe')" :key="m.orgId + m.role">
+                                <span>
+                                    <a href="#" @click.prevent="showOrgById(m.orgId)" x-text="m.orgName"></a>
+                                    <span x-show="m.role" x-text="' · ' + m.role"></span>
+                                    <span> · </span>
+                                </span>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </section>
+    </template>
+
+    <!-- Admin view -->
+    <template x-if="view === 'admin' && !loading && !query.trim()">
+        <section>
+            <h2>Zuletzt gescraped
+                <small x-show="adminItems.length" style="font-weight:400; color:var(--pico-muted-color);"
+                       x-text="'(' + adminItems.length + ')'"></small>
+                <button style="margin-left:1em; font-size:0.7em; padding:0.2em 0.6em;"
+                        @click="adminLoaded=false; goAdmin()">↺</button>
+            </h2>
+            <p x-show="adminLoading" aria-busy="true"></p>
+            <!-- Desktop -->
+            <table x-show="!adminLoading && adminItems.length > 0 && wideList"
+                   style="width:100%; table-layout:fixed;">
+                <thead>
+                    <tr>
+                        <th style="width:10em;">Zeitpunkt</th>
+                        <th style="width:4em;">Typ</th>
+                        <th style="width:12em;">Gremium</th>
+                        <th style="width:7em;">Sitzung</th>
+                        <th style="width:7.5em;"></th>
+                        <th>Betreff</th>
+                        <th style="width:7em;">Beschluss</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="item in adminItems" :key="item.id">
+                        <tr>
+                            <td style="white-space:nowrap; font-size:0.78em; color:var(--pico-muted-color);"
+                                x-text="new Date(item.scrapedAt).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})"></td>
+                            <td style="font-size:0.75em; white-space:nowrap;">
+                                <span :style="'padding:0.15em 0.4em; border-radius:3px; background:' + (item.syncType==='to020' ? '#3a5a8a' : item.syncType==='to010' ? '#2d6a4f' : '#7b4f9e') + '; color:#fff;'"
+                                      x-text="item.syncType"></span>
+                            </td>
+                            <td style="font-size:0.85em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                                x-text="item.orgName || '—'"></td>
+                            <td style="white-space:nowrap;">
+                                <template x-if="item.meetingId">
+                                    <a href="#" @click.prevent="openAdminMeeting(item)"
+                                       x-text="item.meetingStart ? formatDateShort(item.meetingStart) : item.meetingId"></a>
+                                </template>
+                                <template x-if="!item.meetingId"><span style="color:var(--pico-muted-color);">—</span></template>
+                            </td>
+                            <td style="white-space:nowrap; font-size:0.85em;" x-text="item.number || '—'"></td>
+                            <td style="font-size:0.85em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                                x-text="item.name"></td>
+                            <td>
+                                <template x-if="item.result">
+                                    <span :class="'result-badge result-' + item.result"
+                                          x-text="resultLabel(item.result)"></span>
+                                </template>
+                                <template x-if="!item.result"><span style="color:var(--pico-muted-color);">—</span></template>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <!-- Mobile -->
+            <div x-show="!adminLoading && adminItems.length > 0 && !wideList">
+                <template x-for="item in adminItems" :key="item.id">
+                    <div class="mlist-item">
+                        <div class="mlist-row">
+                            <span class="mlist-primary" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 0; min-width:0;"
+                                  x-text="item.name"></span>
+                            <span style="font-size:0.72em; white-space:nowrap; flex:0 0 auto; margin-left:0.4em;">
+                                <span :style="'padding:0.15em 0.4em; border-radius:3px; background:' + (item.syncType==='to020' ? '#3a5a8a' : item.syncType==='to010' ? '#2d6a4f' : '#7b4f9e') + '; color:#fff;'"
+                                      x-text="item.syncType"></span>
+                            </span>
+                        </div>
+                        <div class="mlist-secondary mlist-row">
+                            <span>
+                                <span x-text="item.orgName || '—'"></span>
+                                <template x-if="item.meetingId">
+                                    · <a href="#" @click.prevent="openAdminMeeting(item)"
+                                         x-text="item.meetingStart ? formatDateShort(item.meetingStart) : item.meetingId"></a>
+                                </template>
+                                <span x-show="item.number"> · <span x-text="item.number"></span></span>
+                            </span>
+                            <span style="display:flex; align-items:center; gap:0.3em; flex:0 0 auto;">
+                                <template x-if="item.result">
+                                    <span :class="'result-badge result-' + item.result"
+                                          x-text="resultLabel(item.result)"></span>
+                                </template>
+                                <span x-text="new Date(item.scrapedAt).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})"></span>
+                            </span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </section>
+    </template>
+
+    <!-- Meeting detail -->
+    <template x-if="view === 'meeting' && !loading && !query.trim()">
+        <div style="height:100%; display:contents">
+
+            <!-- ── Desktop: split layout ── -->
+            <div x-show="wide" class="split-layout">
+                <section class="split-content" :style="'width:' + agendaWidth + 'px'">
+                    <hgroup style="margin-bottom:0.35rem;">
+                        <h2 style="display:flex; align-items:center; gap:0.4em; margin-bottom:0.1rem;">
+                            <span x-text="meeting.name"></span>
+                            <a :href="(municipality?.allrisBaseUrl || '') + '/to010?SILFDNR=' + meeting.id"
+                               target="_blank" rel="noopener" title="Im RIS öffnen" class="ris-badge">RIS</a>
+                            <a :href="'/md/sitzungen/' + meeting.id" target="_blank" rel="noopener"
+                               title="Markdown-Ansicht" class="md-badge">MD</a>
+                        </h2>
+                        <p style="margin:0; font-size:0.9em;">
+                            <span x-text="formatDate(meeting.start)"></span>
+                            <template x-if="meeting.location">
+                                <span> · <span x-text="meeting.location"></span></span>
+                            </template>
+                        </p>
+                    </hgroup>
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.4rem; flex-wrap:wrap; gap:0.3rem;">
+                        <div class="files">
+                            <template x-for="f in (meeting.files || [])" :key="f.id">
+                                <button class="outline" style="font-size:0.75em; padding:0.15em 0.5em;"
+                                        @click="openPdf(f)" x-text="f.name"></button>
+                            </template>
+                        </div>
+                        <label style="font-size:0.82em; white-space:nowrap; cursor:pointer; margin:0; user-select:none;">
+                            <input type="checkbox" x-model="showDetails" role="checkbox"> mit Details
+                        </label>
+                    </div>
+                    <p x-show="meeting.items.length === 0">Keine Tagesordnungspunkte vorhanden.</p>
+                    <div class="meeting-scroll-wrap" x-show="meeting.items.length > 0">
+                    <table style="table-layout:fixed; width:100%;">
+                        <thead>
+                            <tr>
+                                <th style="width:5.25em; white-space:nowrap;">TOP</th>
+                                <th>Betreff</th>
+                                <th style="width:9em;">Vorlage / Dokumente</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="item in meeting.items" :key="item.id">
+                                <tr :class="item.public ? '' : 'nonpublic'">
+                                    <td x-text="item.number || '—'"></td>
+                                    <td>
+                                        <span x-text="item.name"></span>
+                                        <a :href="(municipality?.allrisBaseUrl || '') + '/to020?TOLFDNR=' + item.id"
+                                           target="_blank" rel="noopener" title="Im RIS öffnen" class="ris-badge">RIS</a>
+                                        <small x-show="!item.public"> (nichtöffentlich)</small>
+                                        <template x-if="item.result || (showDetails && (item.resolutionText || item.voteText || item.wordContribution))">
+                                            <div class="top-detail">
+                                                <template x-if="item.result">
+                                                    <span :class="'result-badge result-' + item.result"
+                                                          x-text="resultLabel(item.result)"></span>
+                                                </template>
+                                                <div x-show="showDetails && item.voteText" class="top-section"
+                                                     x-html="(item.voteText||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
+                                                <div x-show="showDetails && item.resolutionText" class="top-section"
+                                                     x-html="(item.resolutionText||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
+                                                <div x-show="showDetails && item.wordContribution" class="top-section"
+                                                     x-html="(item.wordContribution||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
+                                            </div>
+                                        </template>
+                                    </td>
+                                    <td>
+                                        <div x-show="item.paper?.reference" x-text="item.paper?.reference"
+                                             style="font-size:0.85em; margin-bottom:0.25rem;"></div>
+                                        <div class="files" x-show="item.paper?.files?.length">
+                                            <template x-for="file in (item.paper?.files || [])" :key="file.id">
+                                                <a :href="proxyUrl(file.id)" target="_blank"
+                                                   @click="$event.preventDefault(); openPdf(file)"
+                                                   x-text="file.name"
+                                                   :style="activePdfId === file.id ? 'font-weight:600' : ''"></a>
+                                            </template>
+                                        </div>
+                                        <div class="files" x-show="item.files?.length">
+                                            <template x-for="file in (item.files || [])" :key="file.id">
+                                                <a :href="proxyUrl(file.id)" target="_blank"
+                                                   @click="$event.preventDefault(); openPdf(file)"
+                                                   x-text="file.name"
+                                                   :style="activePdfId === file.id ? 'font-weight:600' : ''"
+                                                   style="font-style:italic"></a>
+                                            </template>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                    </div><!-- meeting-scroll-wrap -->
+                </section>
+                <div class="split-handle" @mousedown.prevent="startResize($event)" title="Breite anpassen"></div>
+                <aside class="split-pdf">
+                    <div x-show="pdfLoading" class="pdf-loading-overlay">
+                        <div class="pdf-spinner"></div>
+                    </div>
+                    <template x-if="activePdfUrl">
+                        <div style="display:flex; flex-direction:column; height:100%;">
+                            <div x-show="activePdfSourceUrl" style="padding:0.2rem 0.4rem; font-size:0.72em; color:var(--pico-muted-color); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:0 0 auto;">
+                                Quelle: <a :href="activePdfSourceUrl" target="_blank" rel="noopener"
+                                           x-text="activePdfSourceLabel || activePdfSourceUrl" style="color:inherit;"></a>
+                            </div>
+                            <iframe :src="activePdfUrl" @load="pdfLoading = false" title="Dokument"
+                                    style="flex:1 1 auto; min-height:0;"></iframe>
+                        </div>
+                    </template>
+                    <template x-if="!activePdfUrl">
+                        <div class="pdf-placeholder">
+                            Dokument auswählen<br>
+                            <small>Klick auf einen Dateinamen öffnet die PDF hier</small>
+                        </div>
+                    </template>
+                </aside>
+            </div>
+
+            <!-- ── Mobile: section-based layout ── -->
+            <div x-show="!wide">
+
+                <!-- Sticky mini-header -->
+                <div class="mobile-header">
+                    <div class="mobile-header-top">
+                        <a href="#" @click.prevent="goMeetings()" class="mobile-header-back">
+                            ← <span x-text="selectedOrg?.orgName || 'Zurück'"></span>
+                        </a>
+                        <span class="mobile-header-date"
+                              x-text="meeting.start ? formatDateShort(meeting.start) : ''"></span>
+                    </div>
+                    <div class="mobile-header-mid" x-text="meeting.name"></div>
+                    <div class="mobile-header-bottom">
+                        <div class="files">
+                            <template x-for="f in (meeting.files || [])" :key="f.id">
+                                <a :href="proxyUrl(f.id)" target="_blank"
+                                   style="font-size:0.8em;" x-text="f.name"></a>
+                            </template>
+                        </div>
+                        <label style="font-size:0.82em; white-space:nowrap; margin:0; cursor:pointer; user-select:none;">
+                            <input type="checkbox" x-model="showDetails" role="checkbox"> mit Details
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Agenda sections -->
+                <p x-show="meeting.items.length === 0" style="padding-top:0.75rem;">
+                    Keine Tagesordnungspunkte vorhanden.
+                </p>
+                <template x-for="item in meeting.items" :key="item.id">
+                    <div :class="'mobile-top' + (item.public ? '' : ' nonpublic')">
+                        <div class="mobile-top-row">
+                            <span class="mobile-top-num" x-text="item.number || '—'"></span>
+                            <div class="mobile-top-main">
+                                <span x-text="item.name"></span>
+                                <a :href="(municipality?.allrisBaseUrl || '') + '/to020?TOLFDNR=' + item.id"
+                                   target="_blank" rel="noopener" title="Im RIS öffnen" class="ris-badge">RIS</a>
+                                <small x-show="!item.public"> (nichtöffentlich)</small>
+                                <template x-if="item.result">
+                                    <span :class="'result-badge result-' + item.result"
+                                          x-text="resultLabel(item.result)"></span>
+                                </template>
+                            </div>
+                        </div>
+                        <!-- Paper ref + files -->
+                        <div class="mobile-top-sub"
+                             x-show="item.paper?.reference || item.paper?.files?.length || item.files?.length">
+                            <span x-show="item.paper?.reference" x-text="item.paper?.reference"
+                                  style="display:block; font-size:0.8em; color:var(--pico-muted-color); margin-bottom:0.15rem;"></span>
+                            <div class="files">
+                                <template x-for="f in (item.paper?.files || [])" :key="f.id">
+                                    <a :href="proxyUrl(f.id)" target="_blank"
+                                       style="font-size:0.85em;" x-text="f.name"></a>
+                                </template>
+                                <template x-for="f in (item.files || [])" :key="f.id">
+                                    <a :href="proxyUrl(f.id)" target="_blank"
+                                       style="font-size:0.85em; font-style:italic;" x-text="f.name"></a>
+                                </template>
+                            </div>
+                        </div>
+                        <!-- Detail texts -->
+                        <div class="mobile-top-sub top-section"
+                             x-show="showDetails && (item.voteText || item.resolutionText || item.wordContribution)">
+                            <div x-show="item.voteText"
+                                 x-html="(item.voteText||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
+                            <div x-show="item.resolutionText"
+                                 x-html="(item.resolutionText||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
+                            <div x-show="item.wordContribution"
+                                 x-html="(item.wordContribution||'').split(/\n\n+/).map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('')"></div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+        </div>
+    </template>
+</main>
+
+
+<script>
+function app() {
+    return {
+        body: null,
+        view: 'orgs',
+        loading: false,
+
+        orgs: [],
+        orgTypes: [],
+        allMeetings: [],
+        meetings: [],
+        meeting: null,
+        selectedOrg: null,
+
+        orgTab: 'meetings',
+        orgMembers: [],
+        orgMembersLoading: false,
+
+        persons: [],
+        personsLoading: false,
+        personsLoaded: false,
+
+        query: '',
+        searchResults: [],
+        allLoaded: false,
+        loadingAll: false,
+
+        showDetails: false,
+        wide: window.innerWidth > 1024,
+        wideList: window.innerWidth > 640,
+        agendaWidth: 700,
+        activePdfUrl: null,
+        activePdfId: null,
+        activePdfSourceUrl: null,
+        activePdfSourceLabel: null,
+        pdfLoading: false,
+        municipality: null,
+
+        adminItems: [],
+        adminLoading: false,
+        adminLoaded: false,
+
+        async init() {
+            window.addEventListener('resize', () => {
+                this.wide = window.innerWidth > 1024;
+                this.wideList = window.innerWidth > 640;
+            });
+
+            this.loading = true;
+            try {
+                const [bodyRes, muniRes, orgsRes] = await Promise.all([
+                    fetch('/oparl/v1.1/body/1'),
+                    fetch('/ui/municipality'),
+                    fetch('/ui/orgs'),
+                ]);
+                this.body = await bodyRes.json();
+                this.municipality = await muniRes.json();
+                const orgsData = await orgsRes.json();
+                document.title = this.body.systemName || 'Bürgerinformation';
+                if (this.municipality?.wappenUrl) {
+                    const link = document.querySelector("link[rel~='icon']") || document.createElement('link');
+                    link.rel = 'icon';
+                    link.href = this.municipality.wappenUrl;
+                    document.head.appendChild(link);
+                }
+                this._buildOrgTable(orgsData.orgs, []);
+            } finally {
+                this.loading = false;
+            }
+
+            // Load full meeting index in background for search + last/next dates
+            this.loadingAll = true;
+            fetch('/ui/all').then(r => r.json()).then(allData => {
+                this.allMeetings = allData.meetings;
+                this._buildOrgTable(null, allData.meetings);
+                this.allLoaded = true;
+                this.loadingAll = false;
+                // If user already navigated to a meeting list, refresh it now
+                if (this.view === 'meetings' && this.selectedOrg) {
+                    this.showMeetings(this.selectedOrg);
+                }
+            });
+        },
+
+        _buildOrgTable(orgsData, meetings) {
+            const now = new Date().toISOString();
+            const sortKey = n => n.replace(/^ausschuss\s+für\s+/i, '');
+            const typeOrder = ['Rat', 'Ausschuss', 'Fraktion/Gruppe', 'Mitgliedschaften'];
+
+            // (Re-)initialise the map when orgs data is provided
+            if (orgsData) {
+                this._orgMap = new Map();
+                for (const o of orgsData) {
+                    const fmd = o.futureMeetingDates || [];
+                    this._orgMap.set(o.id, {
+                        orgId: o.id, orgName: o.name, orgType: o.type,
+                        lastMeeting: null, lastMeetingId: null,
+                        nextMeeting: null, nextMeetingId: null,
+                        nextMeetingDate: fmd[0] || o.nextMeetingDate || null,
+                        futureMeetingDates: fmd,
+                    });
+                }
+            }
+
+            // Overlay last/next meeting info when meetings are available
+            if (meetings && meetings.length > 0) {
+                for (const m of meetings) {
+                    if (!m.orgId || !this._orgMap.has(m.orgId)) continue;
+                    const org = this._orgMap.get(m.orgId);
+                    if (m.start) {
+                        if (m.start < now) {
+                            if (!org.lastMeeting || m.start > org.lastMeeting) {
+                                org.lastMeeting = m.start; org.lastMeetingId = m.id;
+                            }
+                        } else {
+                            if (!org.nextMeeting || m.start < org.nextMeeting) {
+                                org.nextMeeting = m.start; org.nextMeetingId = m.id;
+                            }
+                        }
+                    }
+                }
+            }
+
+            this.orgs = [...this._orgMap.values()].sort((a, b) =>
+                sortKey(a.orgName).localeCompare(sortKey(b.orgName), 'de'));
+
+            const byType = new Map();
+            for (const org of this.orgs) {
+                const t = org.orgType || 'Sonstige';
+                if (!byType.has(t)) byType.set(t, []);
+                byType.get(t).push(org);
+            }
+            this.orgTypes = typeOrder
+                .filter(t => byType.has(t))
+                .map(t => ({ type: t, orgs: byType.get(t) }));
+            for (const [t, orgs] of byType) {
+                if (!typeOrder.includes(t)) this.orgTypes.push({ type: t, orgs });
+            }
+        },
+
+        startResize(e) {
+            const startX = e.clientX;
+            const startW = this.agendaWidth;
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            const onMove = (ev) => {
+                const delta = ev.clientX - startX;
+                this.agendaWidth = Math.max(300, Math.min(window.innerWidth - 400, startW + delta));
+            };
+            const onUp = () => {
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        },
+
+        showMeetings(org) {
+            this.selectedOrg = org;
+            this.meeting = null;
+            this.activePdfUrl = null; this.activePdfSourceUrl = null; this.activePdfSourceLabel = null;
+            this.activePdfId = null;
+            this.view = 'meetings';
+            this.orgMembers = [];
+            const realMeetings = this.allMeetings.filter(m => m.orgId === org.orgId);
+            const allStarts = new Set(realMeetings.map(m => m.start ? m.start.slice(0, 10) : null));
+            const synthetic = (org.futureMeetingDates || [])
+                .filter(iso => !allStarts.has(iso.slice(0, 10)))
+                .map(iso => ({ id: null, orgId: org.orgId, start: iso, name: org.orgName, items: [] }));
+            this.meetings = [...synthetic, ...realMeetings]
+                .sort((a, b) => (b.start || '').localeCompare(a.start || ''));
+            if (this.meetings.length === 0) {
+                this.loadOrgMembers();
+            } else {
+                this.orgTab = 'meetings';
+            }
+        },
+
+        async loadOrgMembers() {
+            this.orgTab = 'members';
+            if (this.orgMembers.length > 0) return;
+            this.orgMembersLoading = true;
+            try {
+                const r = await fetch(`/ui/org/${this.selectedOrg.orgId}/members`);
+                const data = await r.json();
+                this.orgMembers = data.members;
+            } finally {
+                this.orgMembersLoading = false;
+            }
+        },
+
+        async goPersons() {
+            this.view = 'persons';
+            this.selectedOrg = null;
+            this.meeting = null;
+            this.activePdfUrl = null; this.activePdfSourceUrl = null; this.activePdfSourceLabel = null;
+            this.activePdfId = null;
+            if (this.personsLoaded) return;
+            this.personsLoading = true;
+            try {
+                const r = await fetch('/ui/persons');
+                const data = await r.json();
+                this.persons = data.persons;
+                this.personsLoaded = true;
+            } finally {
+                this.personsLoading = false;
+            }
+        },
+
+        showOrgById(orgId) {
+            const org = this.orgs.find(o => o.orgId === orgId);
+            if (org) this.showMeetings(org);
+        },
+
+        showOrgByName(name) {
+            const org = this.orgs.find(o => o.orgName === name);
+            if (org) this.showMeetings(org);
+        },
+
+        get flatOrgRows() {
+            const rows = [];
+            for (const grp of this.orgTypes) {
+                if (grp.type === 'Mitgliedschaften') continue;
+                rows.push({ isHeader: true, type: grp.type });
+                for (const org of grp.orgs) rows.push({ isHeader: false, ...org });
+            }
+            return rows;
+        },
+
+        get filteredMeetings() {
+            return this.meetings;
+        },
+
+        async showMeeting(mtg) {
+            this.view = 'meeting';
+            this.activePdfUrl = null; this.activePdfSourceUrl = null; this.activePdfSourceLabel = null;
+            this.activePdfId = null;
+            this.loading = true;
+            try {
+                const r = await fetch(`/ui/meeting/${mtg.id}`);
+                this.meeting = await r.json();
+            } finally {
+                this.loading = false;
+            }
+            if (this.wide && this.meeting.files && this.meeting.files.length > 0) {
+                const autoFile =
+                    this.meeting.files.find(f => f.name.toLowerCase().includes('protokoll')) ||
+                    this.meeting.files.find(f => f.name.toLowerCase().includes('bekanntmachung')) ||
+                    null;
+                if (autoFile) this.openPdf(autoFile);
+            }
+        },
+
+        openPdf(file) {
+            this.pdfLoading = true;
+            this.activePdfId = file.id;
+            this.activePdfUrl = this.proxyUrl(file.id);
+            this.activePdfSourceUrl = file.url || null;
+            this.activePdfSourceLabel = file.displayLabel || null;
+        },
+
+        proxyUrl(fileId) {
+            return `/ui/proxy/file/${fileId}`;
+        },
+
+        onSearch() {
+            const q = this.query.trim().toLowerCase();
+            if (!q) { this.searchResults = []; return; }
+            const terms = q.split(/\s+/);
+            const matches = s => terms.every(t => s.includes(t));
+
+            const results = [];
+            for (const mtg of this.allMeetings) {
+                if (matches(mtg.name.toLowerCase())) {
+                    results.push({
+                        key: `mtg-${mtg.id}`,
+                        type: 'meeting',
+                        mtgId: mtg.id,
+                        orgName: mtg.orgName,
+                        start: mtg.start,
+                        number: null,
+                        name: mtg.name,
+                        paperRef: null,
+                    });
+                }
+                for (const item of mtg.items) {
+                    const hay = item.name.toLowerCase() + ' ' + (item.paperRef || '').toLowerCase();
+                    if (matches(hay)) {
+                        results.push({
+                            key: `ai-${item.id}`,
+                            type: 'item',
+                            mtgId: mtg.id,
+                            orgId: mtg.orgId,
+                            orgName: mtg.orgName,
+                            start: mtg.start,
+                            number: item.number,
+                            name: item.name,
+                            paperRef: item.paperRef,
+                        });
+                    }
+                }
+            }
+            results.sort((a, b) => (b.start || '').localeCompare(a.start || ''));
+            this.searchResults = results.slice(0, 100);
+        },
+
+        async openSearchResult(r) {
+            this.query = '';
+            this.searchResults = [];
+            const mtg = this.allMeetings.find(m => m.id === r.mtgId);
+            if (mtg) {
+                this.selectedOrg = { orgId: mtg.orgId, orgName: mtg.orgName };
+                this.meetings = this.allMeetings
+                    .filter(m => m.orgId === mtg.orgId)
+                    .sort((a, b) => (b.start || '').localeCompare(a.start || ''));
+                await this.showMeeting(mtg);
+            }
+        },
+
+        goOrgs() {
+            this.view = 'orgs';
+            this.selectedOrg = null;
+            this.meeting = null;
+            this.meetings = [];
+            this.activePdfUrl = null; this.activePdfSourceUrl = null; this.activePdfSourceLabel = null;
+            this.activePdfId = null;
+            this.orgMembers = [];
+        },
+
+        async goAdmin() {
+            this.view = 'admin';
+            this.selectedOrg = null;
+            this.meeting = null;
+            this.activePdfUrl = null; this.activePdfSourceUrl = null; this.activePdfSourceLabel = null;
+            this.activePdfId = null;
+            if (this.adminLoaded) return;
+            this.adminLoading = true;
+            try {
+                const r = await fetch('/ui/admin/recent');
+                const data = await r.json();
+                this.adminItems = data.items;
+                this.adminLoaded = true;
+            } finally {
+                this.adminLoading = false;
+            }
+        },
+
+        async openAdminMeeting(item) {
+            const org = this.orgs.find(o => o.orgId === item.orgId);
+            if (org) {
+                this.showMeetings(org);
+            } else {
+                this.selectedOrg = { orgId: item.orgId, orgName: item.orgName };
+                this.meetings = this.allMeetings
+                    .filter(m => m.orgId === item.orgId)
+                    .sort((a, b) => (b.start || '').localeCompare(a.start || ''));
+            }
+            await this.showMeeting({ id: item.meetingId });
+        },
+
+        goMeetings() {
+            this.view = 'meetings';
+            this.meeting = null;
+            this.activePdfUrl = null; this.activePdfSourceUrl = null; this.activePdfSourceLabel = null;
+            this.activePdfId = null;
+        },
+
+        highlight(text) {
+            if (!text || !this.query.trim()) return text;
+            const terms = this.query.trim().split(/\s+/)
+                .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            let out = text;
+            for (const t of terms)
+                out = out.replace(new RegExp(t, 'gi'), m => `<mark>${m}</mark>`);
+            return out;
+        },
+
+        resultLabel(result) {
+            return {ACCEPTED: 'beschlossen', REJECTED: 'abgelehnt',
+                    DEFERRED: 'vertagt', NODECISION: 'zur Kenntnis'}[result] || result;
+        },
+
+        makeIcs(name, isoStart, orgId, meetingId, items) {
+            // Date-only strings (YYYY-MM-DD) are parsed as UTC by JS → shift to local time
+            const normalized = isoStart && !isoStart.includes('T') ? isoStart + 'T00:00:00' : isoStart;
+            const d = new Date(normalized);
+            const pad = n => String(n).padStart(2, '0');
+            const fmt = x => `${x.getFullYear()}${pad(x.getMonth()+1)}${pad(x.getDate())}T${pad(x.getHours())}${pad(x.getMinutes())}00`;
+            const end = new Date(d.getTime() + 2 * 3600 * 1000);
+            const esc = s => (s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+            const base = this.municipality?.allrisBaseUrl || '';
+
+            const descParts = [];
+            if (meetingId && base) descParts.push(`Sitzung: ${base}/to010?SILFDNR=${meetingId}`);
+            if (orgId && base)     descParts.push(`Gremium: ${base}/si018?GRLFDNR=${orgId}`);
+            if (items?.length) {
+                descParts.push('', 'Tagesordnung:');
+                for (const it of items)
+                    descParts.push(`${it.number ? it.number + ' ' : ''}${it.name}`);
+            }
+
+            const lines = [
+                'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//oparl-bridge//DE',
+                'BEGIN:VEVENT',
+                `DTSTART:${fmt(d)}`, `DTEND:${fmt(end)}`,
+                `SUMMARY:${esc(name)}`,
+            ];
+            if (descParts.length) lines.push(`DESCRIPTION:${esc(descParts.join('\n'))}`);
+            if (meetingId && base) lines.push(`URL:${base}/to010?SILFDNR=${meetingId}`);
+            lines.push('END:VEVENT', 'END:VCALENDAR');
+            return 'data:text/calendar;charset=utf-8,' + encodeURIComponent(lines.join('\r\n'));
+        },
+
+        formatDate(iso) {
+            if (!iso) return '—';
+            return new Date(iso).toLocaleString('de-DE', {
+                weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
+                hour: '2-digit', minute: '2-digit',
+            });
+        },
+
+        formatDateShort(iso) {
+            if (!iso) return '';
+            return new Date(iso).toLocaleDateString('de-DE', {
+                day: '2-digit', month: 'short', year: 'numeric',
+            });
+        },
+
+        formatDateList(iso) {
+            if (!iso) return '—';
+            const d = new Date(iso);
+            const opts = { day: '2-digit', month: 'short', year: 'numeric' };
+            if (d >= new Date()) {
+                opts.weekday = 'short';
+                opts.hour = '2-digit';
+                opts.minute = '2-digit';
+            }
+            return d.toLocaleString('de-DE', opts);
+        },
+    };
+}
+</script>
+</body>
+</html>
