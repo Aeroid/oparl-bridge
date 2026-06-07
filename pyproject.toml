@@ -8,6 +8,12 @@ version = "0.1.0"
 description = "OParl 1.1-compatible API gateway for ALLRIS municipal information systems"
 readme = "README.md"
 license = { file = "LICENSE" }
+authors = [{ name = "Gunnar Klauberg" }]
+
+[project.urls]
+Homepage = "https://github.com/aeroid/oparl-bridge"
+Repository = "https://github.com/aeroid/oparl-bridge"
+Issues = "https://github.com/aeroid/oparl-bridge/issues"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111.0",

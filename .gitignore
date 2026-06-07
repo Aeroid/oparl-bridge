@@ -5,6 +5,8 @@ dist/
 build/
 .env
 *.db
+*.db-shm
+*.db-wal
 .venv/
 venv/
 oparl_cookies.json

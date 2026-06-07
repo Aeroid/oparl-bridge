@@ -54,7 +54,7 @@ def _footer() -> str:
     allris = settings.allris_base_url.rstrip("/")
     return (
         "\n---\n"
-        f"Daten abgerufen von oparl-bridge (https://github.com/Aeroid/oparl-bridge)  \n"
+        f"Daten abgerufen von oparl-bridge (https://github.com/aeroid/oparl-bridge)  \n"
         f"Originaldaten: © {settings.body_name} — öffentlich zugängliches Ratsinformationssystem ([Originalquelle]({allris}/))  \n"
         f"Normdaten: [Wikidata](https://www.wikidata.org/) (CC0)\n"
     )
