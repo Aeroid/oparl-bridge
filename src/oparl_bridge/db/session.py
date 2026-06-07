@@ -1,10 +1,22 @@
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from oparl_bridge.config import settings
 from oparl_bridge.db.models import Base
 
 engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})
+
+if settings.database_url.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragmas(dbapi_conn, _):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.execute("PRAGMA cache_size=-32000")   # 32 MB page cache
+        cur.execute("PRAGMA mmap_size=134217728") # 128 MB memory-mapped I/O
+        cur.execute("PRAGMA temp_store=MEMORY")
+        cur.close()
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -65,6 +77,34 @@ def _migrate(eng) -> None:
         if "future_meeting_dates" not in org_cols2:
             conn.execute(text("ALTER TABLE organizations ADD COLUMN future_meeting_dates TEXT"))
             conn.commit()
+
+        existing_indexes = {i["name"] for i in inspector.get_indexes("meetings")}
+        for idx, ddl in [
+            ("ix_meetings_org_id",          "CREATE INDEX IF NOT EXISTS ix_meetings_org_id ON meetings(organization_id)"),
+            ("ix_meetings_detail_scraped",  "CREATE INDEX IF NOT EXISTS ix_meetings_detail_scraped ON meetings(detail_scraped_at)"),
+        ]:
+            if idx not in existing_indexes:
+                conn.execute(text(ddl))
+                conn.commit()
+
+        ai_indexes = {i["name"] for i in inspector.get_indexes("agenda_items")}
+        for idx, ddl in [
+            ("ix_ai_meeting_id",        "CREATE INDEX IF NOT EXISTS ix_ai_meeting_id ON agenda_items(meeting_id)"),
+            ("ix_ai_result_scraped",    "CREATE INDEX IF NOT EXISTS ix_ai_result_scraped ON agenda_items(result_scraped_at)"),
+            ("ix_ai_paper_id",          "CREATE INDEX IF NOT EXISTS ix_ai_paper_id ON agenda_items(paper_id)"),
+        ]:
+            if idx not in ai_indexes:
+                conn.execute(text(ddl))
+                conn.commit()
+
+        file_indexes = {i["name"] for i in inspector.get_indexes("files")}
+        for idx, ddl in [
+            ("ix_files_meeting_id",      "CREATE INDEX IF NOT EXISTS ix_files_meeting_id ON files(meeting_id)"),
+            ("ix_files_agenda_item_id",  "CREATE INDEX IF NOT EXISTS ix_files_agenda_item_id ON files(agenda_item_id)"),
+        ]:
+            if idx not in file_indexes:
+                conn.execute(text(ddl))
+                conn.commit()
 
 
 def get_db():
