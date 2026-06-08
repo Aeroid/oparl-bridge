@@ -5,21 +5,26 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from oparl_bridge.config import settings
-from oparl_bridge.db.models import AgendaItem, File, Meeting, Membership, Organization, Paper, Person
+from oparl_bridge.db.models import (
+    AgendaItem,
+    File,
+    Meeting,
+    Membership,
+    Organization,
+    Paper,
+    Person,
+)
 from oparl_bridge.db.session import get_db
 from oparl_bridge.normalizer.mapper import OParlMapper
-from oparl_bridge.wikidata import WikidataData, get_wikidata
 from oparl_bridge.normalizer.oparl_schema import (
     OParlAgendaItem,
     OParlBody,
     OParlFile,
-    OParlMeeting,
     OParlMembership,
-    OParlOrganization,
-    OParlPaper,
     OParlPerson,
     OParlSystem,
 )
+from oparl_bridge.wikidata import WikidataData, get_wikidata
 
 router = APIRouter(prefix="/oparl/v1.1", tags=["OParl 1.1"])
 

@@ -27,6 +27,7 @@ async def lifespan(app: FastAPI):
     logger.info("oparl-bridge started. ALLRIS base: %s", settings.allris_base_url)
     if settings.wikidata_id:
         import asyncio
+
         from oparl_bridge.wikidata import warm_cache
         asyncio.ensure_future(warm_cache(settings.wikidata_id))
     yield

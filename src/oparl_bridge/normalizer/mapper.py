@@ -7,7 +7,15 @@ from typing import TYPE_CHECKING
 
 from oparl_bridge.config import Settings
 from oparl_bridge.config import settings as default_settings
-from oparl_bridge.db.models import AgendaItem, File, Meeting, Membership, Organization, Paper, Person
+from oparl_bridge.db.models import (
+    AgendaItem,
+    File,
+    Meeting,
+    Membership,
+    Organization,
+    Paper,
+    Person,
+)
 
 if TYPE_CHECKING:
     from oparl_bridge.wikidata import WikidataData
