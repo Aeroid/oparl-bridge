@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -19,7 +21,10 @@ from oparl_bridge.normalizer.oparl_schema import (
     OParlSystem,
 )
 
-router = APIRouter(prefix="/oparl/v1.1")
+router = APIRouter(prefix="/oparl/v1.1", tags=["OParl 1.1"])
+
+_DUMP = {"mode": "json", "by_alias": True, "exclude_none": True}
+_404 = {404: {"description": "Not found"}}
 
 
 def _md_url(base_url: str, path: str) -> str:
@@ -56,10 +61,9 @@ async def list_bodies(
     wd: WikidataData | None = Depends(get_wikidata_dep),
 ):
     body = mapper.body(wikidata=wd)
-    import json
     return Response(
         content=json.dumps({
-            "data": [body.model_dump(by_alias=True, exclude_none=True)],
+            "data": [body.model_dump(**_DUMP)],
             "links": {},
             "pagination": {"totalElements": 1, "elementsPerPage": 100, "currentPage": 1},
         }),
@@ -72,10 +76,9 @@ async def get_body(
     mapper: OParlMapper = Depends(get_mapper),
     wd: WikidataData | None = Depends(get_wikidata_dep),
 ):
-    import json
     body = mapper.body(wikidata=wd)
     return Response(
-        content=json.dumps(body.model_dump(by_alias=True, exclude_none=True)),
+        content=json.dumps(body.model_dump(**_DUMP)),
         media_type="application/json",
     )
 
@@ -85,8 +88,7 @@ async def list_organizations(
     mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
     orgs = db.query(Organization).all()
-    data = [_with_md(mapper.organization(o).model_dump(by_alias=True, exclude_none=True), mapper._base_url, f"/md/gremien/{o.id}") for o in orgs]
-    import json
+    data = [_with_md(mapper.organization(o).model_dump(**_DUMP), mapper._base_url, f"/md/gremien/{o.id}") for o in orgs]
     return Response(
         content=json.dumps({"data": data, "links": {}, "pagination": {"totalElements": len(data)}}),
         media_type="application/json",
@@ -94,15 +96,14 @@ async def list_organizations(
     )
 
 
-@router.get("/organization/{org_id}")
+@router.get("/organization/{org_id}", responses=_404)
 async def get_organization(
     org_id: int, mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
     org = db.get(Organization, org_id)
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
-    import json
-    d = _with_md(mapper.organization(org).model_dump(by_alias=True, exclude_none=True), mapper._base_url, f"/md/gremien/{org_id}")
+    d = _with_md(mapper.organization(org).model_dump(**_DUMP), mapper._base_url, f"/md/gremien/{org_id}")
     return Response(
         content=json.dumps(d),
         media_type="application/json",
@@ -120,32 +121,30 @@ async def list_meetings(
     if organization is not None:
         q = q.filter(Meeting.organization_id == organization)
     meetings = q.all()
-    data = [_with_md(mapper.meeting(m).model_dump(by_alias=True, exclude_none=True), mapper._base_url, f"/md/sitzungen/{m.id}") for m in meetings]
-    import json
+    data = [_with_md(mapper.meeting(m).model_dump(**_DUMP), mapper._base_url, f"/md/sitzungen/{m.id}") for m in meetings]
     return Response(
-        content=json.dumps({"data": data, "links": {}, "pagination": {"totalElements": len(data)}}, default=str),
+        content=json.dumps({"data": data, "links": {}, "pagination": {"totalElements": len(data)}}),
         media_type="application/json",
         headers={"Link": f'<{mapper._base_url}/md/sitzungen/>; rel="alternate"; type="text/markdown"'},
     )
 
 
-@router.get("/meeting/{meeting_id}")
+@router.get("/meeting/{meeting_id}", responses=_404)
 async def get_meeting(
     meeting_id: int, mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
     mtg = db.get(Meeting, meeting_id)
     if mtg is None:
         raise HTTPException(status_code=404, detail="Meeting not found")
-    import json
-    d = _with_md(mapper.meeting(mtg).model_dump(by_alias=True, exclude_none=True), mapper._base_url, f"/md/sitzungen/{meeting_id}")
+    d = _with_md(mapper.meeting(mtg).model_dump(**_DUMP), mapper._base_url, f"/md/sitzungen/{meeting_id}")
     return Response(
-        content=json.dumps(d, default=str),
+        content=json.dumps(d),
         media_type="application/json",
         headers={"Link": f'<{mapper._base_url}/md/sitzungen/{meeting_id}>; rel="alternate"; type="text/markdown"'},
     )
 
 
-@router.get("/agendaitem/{item_id}", response_model=OParlAgendaItem)
+@router.get("/agendaitem/{item_id}", response_model=OParlAgendaItem, responses=_404)
 async def get_agenda_item(
     item_id: int, mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
@@ -160,27 +159,26 @@ async def list_papers(
     mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
     papers = db.query(Paper).all()
-    data = [_with_md(mapper.paper(p).model_dump(by_alias=True, exclude_none=True), mapper._base_url, f"/md/vorlagen/{p.id}") for p in papers]
+    data = [_with_md(mapper.paper(p).model_dump(**_DUMP), mapper._base_url, f"/md/vorlagen/{p.id}") for p in papers]
     return {"data": data, "links": {}, "pagination": {"totalElements": len(data)}}
 
 
-@router.get("/paper/{paper_id}")
+@router.get("/paper/{paper_id}", responses=_404)
 async def get_paper(
     paper_id: int, mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
     p = db.get(Paper, paper_id)
     if p is None:
         raise HTTPException(status_code=404, detail="Paper not found")
-    import json
-    d = _with_md(mapper.paper(p).model_dump(by_alias=True, exclude_none=True), mapper._base_url, f"/md/vorlagen/{paper_id}")
+    d = _with_md(mapper.paper(p).model_dump(**_DUMP), mapper._base_url, f"/md/vorlagen/{paper_id}")
     return Response(
-        content=json.dumps(d, default=str),
+        content=json.dumps(d),
         media_type="application/json",
         headers={"Link": f'<{mapper._base_url}/md/vorlagen/{paper_id}>; rel="alternate"; type="text/markdown"'},
     )
 
 
-@router.get("/file/{file_id}", response_model=OParlFile)
+@router.get("/file/{file_id}", response_model=OParlFile, responses=_404)
 async def get_file(
     file_id: int, mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
@@ -195,11 +193,11 @@ async def list_persons(
     mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
     persons = db.query(Person).all()
-    data = [mapper.person(p).model_dump(by_alias=True, exclude_none=True) for p in persons]
+    data = [mapper.person(p).model_dump(**_DUMP) for p in persons]
     return {"data": data, "links": {}, "pagination": {"totalElements": len(data)}}
 
 
-@router.get("/person/{person_id}", response_model=OParlPerson)
+@router.get("/person/{person_id}", response_model=OParlPerson, responses=_404)
 async def get_person(
     person_id: int, mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
@@ -209,7 +207,7 @@ async def get_person(
     return mapper.person(p)
 
 
-@router.get("/membership/{membership_id}", response_model=OParlMembership)
+@router.get("/membership/{membership_id}", response_model=OParlMembership, responses=_404)
 async def get_membership(
     membership_id: int, mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
