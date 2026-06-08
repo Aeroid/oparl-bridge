@@ -15,7 +15,9 @@ from oparl_bridge.db.session import get_db
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/ui")
+router = APIRouter(prefix="/ui", tags=["UI (intern)"])
+
+_404 = {404: {"description": "Not found"}}
 
 _SCRAPER_UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -90,7 +92,7 @@ def _file_dict(f) -> dict:
     }
 
 
-@router.get("/meeting/{meeting_id}")
+@router.get("/meeting/{meeting_id}", responses=_404)
 async def ui_meeting(meeting_id: int, db: Session = Depends(get_db)):
     """Return a meeting with agenda items, papers, and file URLs inlined."""
     mtg = db.get(Meeting, meeting_id)
@@ -177,7 +179,7 @@ async def ui_persons(db: Session = Depends(get_db)):
     }
 
 
-@router.get("/org/{org_id}/members")
+@router.get("/org/{org_id}/members", responses=_404)
 async def ui_org_members(org_id: int, db: Session = Depends(get_db)):
     """Members of a specific organization."""
     org = db.get(Organization, org_id)
@@ -376,7 +378,7 @@ async def ui_admin_recent(db: Session = Depends(get_db)):
     return {"items": items[:100]}
 
 
-@router.get("/proxy/file/{file_id}")
+@router.get("/proxy/file/{file_id}", responses=_404)
 async def proxy_file(file_id: int, db: Session = Depends(get_db)):
     """Fetch a PDF from ALLRIS via httpx.
 

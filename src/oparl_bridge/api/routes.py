@@ -21,9 +21,10 @@ from oparl_bridge.normalizer.oparl_schema import (
     OParlSystem,
 )
 
-router = APIRouter(prefix="/oparl/v1.1")
+router = APIRouter(prefix="/oparl/v1.1", tags=["OParl 1.1"])
 
 _DUMP = {"mode": "json", "by_alias": True, "exclude_none": True}
+_404 = {404: {"description": "Not found"}}
 
 
 def _md_url(base_url: str, path: str) -> str:
@@ -95,7 +96,7 @@ async def list_organizations(
     )
 
 
-@router.get("/organization/{org_id}")
+@router.get("/organization/{org_id}", responses=_404)
 async def get_organization(
     org_id: int, mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
@@ -128,7 +129,7 @@ async def list_meetings(
     )
 
 
-@router.get("/meeting/{meeting_id}")
+@router.get("/meeting/{meeting_id}", responses=_404)
 async def get_meeting(
     meeting_id: int, mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
@@ -143,7 +144,7 @@ async def get_meeting(
     )
 
 
-@router.get("/agendaitem/{item_id}", response_model=OParlAgendaItem)
+@router.get("/agendaitem/{item_id}", response_model=OParlAgendaItem, responses=_404)
 async def get_agenda_item(
     item_id: int, mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
@@ -162,7 +163,7 @@ async def list_papers(
     return {"data": data, "links": {}, "pagination": {"totalElements": len(data)}}
 
 
-@router.get("/paper/{paper_id}")
+@router.get("/paper/{paper_id}", responses=_404)
 async def get_paper(
     paper_id: int, mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
@@ -177,7 +178,7 @@ async def get_paper(
     )
 
 
-@router.get("/file/{file_id}", response_model=OParlFile)
+@router.get("/file/{file_id}", response_model=OParlFile, responses=_404)
 async def get_file(
     file_id: int, mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
@@ -196,7 +197,7 @@ async def list_persons(
     return {"data": data, "links": {}, "pagination": {"totalElements": len(data)}}
 
 
-@router.get("/person/{person_id}", response_model=OParlPerson)
+@router.get("/person/{person_id}", response_model=OParlPerson, responses=_404)
 async def get_person(
     person_id: int, mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):
@@ -206,7 +207,7 @@ async def get_person(
     return mapper.person(p)
 
 
-@router.get("/membership/{membership_id}", response_model=OParlMembership)
+@router.get("/membership/{membership_id}", response_model=OParlMembership, responses=_404)
 async def get_membership(
     membership_id: int, mapper: OParlMapper = Depends(get_mapper), db: Session = Depends(get_db)
 ):

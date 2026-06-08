@@ -76,7 +76,7 @@ async def favicon():
     return Response(content=ICO, media_type="image/x-icon")
 
 
-@app.get("/robots.txt", response_class=PlainTextResponse)
+@app.get("/robots.txt", response_class=PlainTextResponse, tags=["Crawler-Metadaten"])
 async def robots_txt():
     return PlainTextResponse(
         "User-agent: *\nAllow: /md/\nAllow: /llms.txt\n",
@@ -84,7 +84,7 @@ async def robots_txt():
     )
 
 
-@app.get("/llms.txt", response_class=PlainTextResponse)
+@app.get("/llms.txt", response_class=PlainTextResponse, tags=["Crawler-Metadaten"])
 async def llms_txt(request: Request, db=Depends(get_db)):
     from oparl_bridge.api.md import _fmt_date_short, _footer
     from oparl_bridge.db.models import Meeting, Organization, Paper, Person
@@ -173,7 +173,7 @@ async def llms_txt(request: Request, db=Depends(get_db)):
     return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; charset=utf-8")
 
 
-@app.get("/sitemap.xml", include_in_schema=False)
+@app.get("/sitemap.xml", tags=["Crawler-Metadaten"])
 async def sitemap_xml(request: Request, db=Depends(get_db)):
     from oparl_bridge.db.models import Meeting, Organization, Paper
     base = str(request.base_url).rstrip("/")
@@ -217,7 +217,7 @@ async def sitemap_xml(request: Request, db=Depends(get_db)):
     return Response(content=xml, media_type="application/xml")
 
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 async def root():
     return FileResponse(_STATIC / "index.html")
 

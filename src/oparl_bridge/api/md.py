@@ -11,7 +11,9 @@ from oparl_bridge.db.models import AgendaItem, Meeting, Membership, Organization
 from oparl_bridge.db.session import get_db
 from oparl_bridge.wikidata import get_wikidata
 
-router = APIRouter()
+router = APIRouter(tags=["Markdown"])
+
+_404 = {404: {"description": "Not found"}}
 
 _DE_MONTHS = [
     "", "Januar", "Februar", "März", "April", "Mai", "Juni",
@@ -120,7 +122,7 @@ async def md_index(request: Request, db: Session = Depends(get_db)):
 # GET /md/gremien/{id}  — committee overview
 # ---------------------------------------------------------------------------
 
-@router.get("/md/gremien/{org_id}", response_class=PlainTextResponse)
+@router.get("/md/gremien/{org_id}", response_class=PlainTextResponse, responses=_404)
 async def md_committee(org_id: int, request: Request, db: Session = Depends(get_db)):
     org = db.get(Organization, org_id)
     if org is None:
@@ -196,7 +198,7 @@ async def md_meetings_index(request: Request, db: Session = Depends(get_db)):
 # GET /md/sitzungen/{id}  — full meeting page
 # ---------------------------------------------------------------------------
 
-@router.get("/md/sitzungen/{meeting_id}", response_class=PlainTextResponse)
+@router.get("/md/sitzungen/{meeting_id}", response_class=PlainTextResponse, responses=_404)
 async def md_meeting(meeting_id: int, request: Request, db: Session = Depends(get_db)):
     mtg = db.get(Meeting, meeting_id)
     if mtg is None:
@@ -271,7 +273,7 @@ async def md_meeting(meeting_id: int, request: Request, db: Session = Depends(ge
 # GET /md/vorlagen/{id}  — paper/Drucksache
 # ---------------------------------------------------------------------------
 
-@router.get("/md/vorlagen/{paper_id}", response_class=PlainTextResponse)
+@router.get("/md/vorlagen/{paper_id}", response_class=PlainTextResponse, responses=_404)
 async def md_paper(paper_id: int, request: Request, db: Session = Depends(get_db)):
     paper = db.get(Paper, paper_id)
     if paper is None:
