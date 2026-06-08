@@ -6,7 +6,15 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from oparl_bridge.db.models import AgendaItem, File, Meeting, Membership, Organization, Paper, Person
+from oparl_bridge.db.models import (
+    AgendaItem,
+    File,
+    Meeting,
+    Membership,
+    Organization,
+    Paper,
+    Person,
+)
 from oparl_bridge.db.session import SessionLocal, init_db
 from oparl_bridge.scraper import AllrisScraper
 
@@ -161,7 +169,7 @@ async def sync_meeting_details(scraper: AllrisScraper, db: Session) -> None:
                 mtg.name = scraped.name
             if scraped.start and mtg.start is None:
                 try:
-                    mtg.start = dt.fromisoformat(scraped.start)
+                    mtg.start = datetime.fromisoformat(scraped.start)
                 except ValueError:
                     pass
             if scraped.organization_id and mtg.organization_id is None:

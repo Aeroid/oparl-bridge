@@ -300,7 +300,8 @@ async def ui_municipality():
 @router.get("/admin/recent")
 async def ui_admin_recent(db: Session = Depends(get_db)):
     """Last 100 scrape events across all sync types (to010, to020, vo020)."""
-    from oparl_bridge.db.models import AgendaItem as AI, Paper
+    from oparl_bridge.db.models import AgendaItem as AI
+    from oparl_bridge.db.models import Paper
 
     items: list[dict] = []
 
