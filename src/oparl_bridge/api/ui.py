@@ -396,7 +396,12 @@ async def proxy_file(file_id: int, db: Session = Depends(get_db)):
     # Determine source page URL and actual PDF URL
     sentinel_index: int | None = None
 
-    if f.access_url.startswith("allris://to020/"):
+    if f.doc_guid is not None and "/doc?" in f.access_url:
+        # App API document: /allris/doc?DOLFDNR=<guid>&DOCTYP=<typ>&OTYP=41&crc=1
+        # Only needs JSESSIONID from any authenticated page (gr010); no Wicket state.
+        source_url = f"{allris_base}/gr010"
+        pdf_url = f.access_url
+    elif f.access_url.startswith("allris://to020/"):
         # Sentinel: allris://to020/{tolfdnr}/{index}
         parts = f.access_url.removeprefix("allris://to020/").split("/")
         tolfdnr = parts[0]

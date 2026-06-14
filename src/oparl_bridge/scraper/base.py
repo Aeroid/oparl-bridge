@@ -39,6 +39,7 @@ class ScrapedMeeting:
     start: str | None = None  # ISO 8601 string, parsed later
     location: str | None = None
     files: list["ScrapedFile"] = field(default_factory=list)  # Sitzungsdokumente
+    docs: list[dict] = field(default_factory=list)  # raw doc metadata for meeting_documents table
 
 
 @dataclass
@@ -53,12 +54,20 @@ class ScrapedAgendaItem:
     resolution_text: str | None = None  # raw Beschlusstext
     vote_text: str | None = None        # raw Abstimmungsergebnis
     files: list["ScrapedFile"] = field(default_factory=list)  # Anlagen + Wortbeiträge
+    beratung_id: int | None = None      # beratung lfdnr from App API (öffentlich/nichtöffentlich section)
+    beschluss_datum: str | None = None  # ISO date of the Beschluss for this meeting
+    beschluss_totyp: int | None = None  # raw totyp bitmask from <beschluss>
+    protokoll_guid: str | None = None   # guid of Protokollauszug doc (typ=138)
+    protokoll_crc: str | None = None    # CRC for change detection
 
 
 @dataclass
 class ScrapedFile:
     name: str
     url: str  # absolute URL
+    crc: str | None = None   # CRC32 hex from App API (for change detection)
+    guid: str | None = None  # ALLRIS document GUID (DOLFDNR) from App API
+    typ: int | None = None   # ALLRIS document type from App API
 
 
 @dataclass
@@ -112,8 +121,15 @@ class AllrisScraper:
                     yield self
                 finally:
                     self._http = None
-                    await self._context.close()
-                    await self._browser.close()
+                    # Browser may have already exited (e.g. received SIGINT directly)
+                    try:
+                        await self._context.close()
+                    except Exception:
+                        pass
+                    try:
+                        await self._browser.close()
+                    except Exception:
+                        pass
                     self._browser = None
                     self._context = None
 
@@ -696,22 +712,90 @@ def _derive_result(vote_text: str | None, resolution_text: str | None) -> str | 
     return None
 
 
+def _table_to_md(table: Tag) -> str:
+    """Convert an HTML table to a Markdown pipe table."""
+    def cell_text(cell: Tag) -> str:
+        return " ".join(cell.get_text().split()).replace("|", "\\|")
+
+    rows: list[list[str]] = []
+    for tr in table.find_all("tr"):
+        cells = [cell_text(td) for td in tr.find_all(("th", "td"))]
+        if cells:
+            rows.append(cells)
+    if not rows:
+        return ""
+    cols = max(len(r) for r in rows)
+    rows = [r + [""] * (cols - len(r)) for r in rows]
+    lines = ["| " + " | ".join(rows[0]) + " |",
+             "| " + " | ".join("---" for _ in rows[0]) + " |"]
+    lines += ["| " + " | ".join(r) + " |" for r in rows[1:]]
+    return "\n".join(lines) + "\n\n"
+
+
 def _elem_to_text(elem: Tag) -> str:
-    """Convert a BS4 element to plain text, treating block elements as paragraph breaks."""
+    """Convert a BS4 element to Markdown, preserving inline and block formatting.
+
+    Headings are stored with their raw levels (h1→#, h2→## …).
+    Use shift_headings() at render time to adjust levels for the embedding context.
+    """
     def walk(node) -> str:
         if isinstance(node, NavigableString):
             return re.sub(r"[ \t]+", " ", str(node))
         if not isinstance(node, Tag):
             return ""
-        if node.name == "br":
+        name = node.name
+        if name == "br":
             return "\n"
+        if name in ("b", "strong"):
+            inner = "".join(walk(c) for c in node.children).strip()
+            return f"**{inner}**" if inner else ""
+        if name in ("em", "i"):
+            inner = "".join(walk(c) for c in node.children).strip()
+            return f"*{inner}*" if inner else ""
+        if name in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            inner = "".join(walk(c) for c in node.children).strip()
+            return f"{'#' * int(name[1])} {inner}\n\n" if inner else ""
+        if name == "a":
+            href = (node.get("href") or "").strip()
+            inner = "".join(walk(c) for c in node.children).strip()
+            if href and not href.startswith(("#", "javascript:")):
+                return f"[{inner}]({href})" if inner else href
+            return inner
+        if name == "ul":
+            items = []
+            for child in node.children:
+                if isinstance(child, Tag) and child.name == "li":
+                    items.append("- " + "".join(walk(c) for c in child.children).strip())
+            return "\n".join(items) + "\n\n" if items else ""
+        if name == "ol":
+            items = []
+            for child in node.children:
+                if isinstance(child, Tag) and child.name == "li":
+                    items.append(f"{len(items) + 1}. " + "".join(walk(c) for c in child.children).strip())
+            return "\n".join(items) + "\n\n" if items else ""
+        if name == "table":
+            return _table_to_md(node)
         kids = "".join(walk(c) for c in node.children)
-        if node.name in ("p", "div", "li", "h1", "h2", "h3", "h4"):
+        if name in ("p", "div", "li"):
             t = kids.strip()
             return t + "\n\n" if t else ""
         return kids
 
     return re.sub(r"\n{3,}", "\n\n", walk(elem)).strip()
+
+
+def shift_headings(text: str, offset: int) -> str:
+    """Shift all Markdown heading levels by offset.
+
+    Use when embedding scraped Markdown into a document that already uses
+    certain heading levels, e.g. offset=2 turns # into ### so content
+    nests correctly under an existing ## section.
+    """
+    if not offset or not text:
+        return text
+    def _bump(m: re.Match) -> str:
+        return "#" * min(len(m.group(1)) + offset, 6) + m.group(2)
+    return re.sub(r"^(#{1,6})([ \t])", _bump, text, flags=re.MULTILINE)
 
 
 def _parse_to020_bs(

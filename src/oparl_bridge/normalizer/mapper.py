@@ -127,6 +127,7 @@ class OParlMapper:
             consultation=consultation,
             result=item.result,
             resolutionText=item.resolution_text,
+            resolutionDate=item.beschluss_datum,
             auxiliaryFile=aux_files,
             created=item.scraped_at,
             modified=item.scraped_at,

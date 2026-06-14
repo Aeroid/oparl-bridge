@@ -92,6 +92,7 @@ class OParlAgendaItem(OParlBase):
     result: str | None = None
     resolution_text: str | None = Field(None, alias="resolutionText")
     resolution_file: str | None = Field(None, alias="resolutionFile")
+    resolution_date: str | None = Field(None, alias="resolutionDate")
     auxiliary_file: list[str] = Field(default_factory=list, alias="auxiliaryFile")
 
 

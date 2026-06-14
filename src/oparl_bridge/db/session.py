@@ -106,6 +106,62 @@ def _migrate(eng) -> None:
                 conn.execute(text(ddl))
                 conn.commit()
 
+        # App API columns — added for ALLRIS /app01 integration
+        file_cols3 = {c["name"] for c in inspector.get_columns("files")}
+        for col, defn in [
+            ("doc_guid", "VARCHAR(100)"),
+            ("doc_crc",  "VARCHAR(20)"),
+        ]:
+            if col not in file_cols3:
+                conn.execute(text(f"ALTER TABLE files ADD COLUMN {col} {defn}"))
+                conn.commit()
+
+        ai_cols4 = {c["name"] for c in inspector.get_columns("agenda_items")}
+        if "beratung_id" not in ai_cols4:
+            conn.execute(text("ALTER TABLE agenda_items ADD COLUMN beratung_id INTEGER"))
+            conn.commit()
+
+        # action=4 Beschluss metadata
+        ai_cols5 = {c["name"] for c in inspector.get_columns("agenda_items")}
+        for col, defn in [
+            ("beschluss_datum", "VARCHAR(20)"),
+            ("beschluss_totyp", "INTEGER"),
+            ("protokoll_guid",  "VARCHAR(100)"),
+            ("protokoll_crc",   "VARCHAR(20)"),
+        ]:
+            if col not in ai_cols5:
+                conn.execute(text(f"ALTER TABLE agenda_items ADD COLUMN {col} {defn}"))
+                conn.commit()
+
+        mtg_cols = {c["name"] for c in inspector.get_columns("meetings")}
+        for col, defn in [
+            ("bekanntmachung_guid", "VARCHAR(100)"),
+            ("protokoll_guid",      "VARCHAR(100)"),
+            ("protokoll_crc",       "VARCHAR(20)"),
+            ("app_api_ts",          "DATETIME"),
+        ]:
+            if col not in mtg_cols:
+                conn.execute(text(f"ALTER TABLE meetings ADD COLUMN {col} {defn}"))
+                conn.commit()
+
+        # meeting_documents table (created via Base.metadata if new, migrated if old)
+        if not inspect(eng).has_table("meeting_documents"):
+            conn.execute(text("""
+                CREATE TABLE meeting_documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    meeting_id INTEGER NOT NULL REFERENCES meetings(id),
+                    guid TEXT NOT NULL,
+                    typ INTEGER NOT NULL,
+                    dotimestamp TEXT,
+                    crc TEXT,
+                    UNIQUE(meeting_id, guid)
+                )
+            """))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_meetdoc_meeting_id ON meeting_documents(meeting_id)"
+            ))
+            conn.commit()
+
 
 def get_db():
     db = SessionLocal()

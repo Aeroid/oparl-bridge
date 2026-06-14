@@ -73,7 +73,10 @@ OPARL_FAVICON_B64=data:image/x-icon;base64,...  # optional: base64-encoded favic
 ### 1. Sync data from ALLRIS
 
 ```bash
-# Full sync: committees → meetings → meeting details → papers/files → agenda item details
+# First-time full sync (historical data via Playwright si018 + gr020 memberships)
+uv run oparl-bridge-sync initial-sync
+
+# Daily sync (API-first: action=1/2/4 + to020 + Vorlagen — no historical backfill)
 uv run oparl-bridge-sync sync
 
 # Individual steps
@@ -82,6 +85,25 @@ uv run oparl-bridge-sync sync-papers        # papers/files only (meeting details
 uv run oparl-bridge-sync sync-item-details  # Beschlüsse, Wortbeiträge, Anlagen from to020
 uv run oparl-bridge-sync reset-details      # force re-scrape all meeting detail pages
 ```
+
+`sync` and `oparl-bridge` (the API server) can run in parallel — SQLite WAL mode allows concurrent reads while the sync writes.
+
+### Sync pipeline
+
+| Step | What | `sync` | `initial-sync` | Est. duration (warm) |
+|------|------|:------:|:--------------:|----------------------|
+| action=1 | Gremien via App API | ✅ | ✅ | ~1 s |
+| action=2 | Sitzungs-Feed (last 4 years) | ✅ | ✅ | ~1 s |
+| action=4 + to010 | Meeting details (API-first, Playwright fallback) | ✅ | ✅ | seconds–minutes |
+| to020 | Beschlüsse, Wortbeiträge, Anlagen per agenda item | ✅ | ✅ | minutes |
+| vo020 / Vorlagen | Paper metadata and file links | ✅ | ✅ | minutes |
+| gr020 | Committee memberships (Playwright) | ✗ | ✅ | ~8 min |
+| si018 | Full historical meeting calendar per committee (Playwright) | ✗ | ✅ | ~15–40 min |
+| action=4 + to010 *(hist.)* | Details for newly discovered historical meetings | ✗ | ✅ | varies |
+| to020 *(hist.)* | Beschlüsse for historical agenda items | ✗ | ✅ | varies |
+| vo020 *(hist.)* | Papers for historical agenda items | ✗ | ✅ | varies |
+
+"Warm" = daily run on an existing database. First run (`initial-sync`) takes significantly longer — historical to020 scraping alone can take many hours for a large municipality (~1500 ms delay per item).
 
 ### 2. Start the server
 
@@ -184,7 +206,7 @@ uv run python scripts/validate_oparl.py
 - **Session warmup**: scraper must visit `gr010` before detail pages are accessible. `prepare_for_to020(meeting_id)` visits to010 via httpx before scraping any to020 items for that meeting.
 - **nichtöffentlich items** (N* prefix) always return 302 from to020 and are skipped without a request.
 - **Rate limiting**: configurable delay before every Playwright `page.goto()` and every httpx request (`OPARL_SCRAPER_DELAY_MS`).
-- **Incremental sync**: `Meeting.detail_scraped_at` tracks scraped meetings; only new ones are re-scraped.
+- **Incremental sync**: `Meeting.detail_scraped_at` tracks scraped meetings; `sync` only processes meetings where this is NULL. `initial-sync` additionally runs Playwright si018 to discover historical meetings (older than `maxZurueck` years) and re-runs the detail pipeline for them.
 - **SQLite optimizations**: WAL journal mode, `synchronous=NORMAL`, 32 MB page cache, 128 MB mmap. Seven indexes on `meetings`, `agenda_items`, and `files` foreign keys applied automatically via `_migrate()` at startup.
 - **SQLite migrations**: new columns and indexes are added via `ALTER TABLE` / `CREATE INDEX IF NOT EXISTS` in `_migrate()` — no Alembic.
 - **Wikidata cache**: single JSON file (`wikidata_cache.json`, gitignored), refreshed in background if stale.
