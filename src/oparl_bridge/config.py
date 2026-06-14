@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     scraper_timeout_ms: int = 30000
     scraper_headless: bool = True
     scraper_delay_ms: int = 1500
+    app_api_delay_ms: int = 300
+    allris_mtyp: str = "bi"
 
 
 settings = Settings()

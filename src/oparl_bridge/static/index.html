@@ -21,7 +21,9 @@
         @media (min-width: 1025px) {
             html, body { height: 100%; }
             body { display: flex; flex-direction: column; }
-            body > main { flex: 1 1 0; min-height: 0; overflow: hidden; }
+            body > main { flex: 1 1 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+            .org-scroll-wrap { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+            .org-scroll-wrap thead th { position: sticky; top: 0; z-index: 1; background: var(--pico-background-color, #fff); }
         }
         .container-fluid { padding-inline: 0.75rem; }
 
@@ -68,6 +70,10 @@
             height: 100%;
             overflow: hidden;
         }
+        @media (min-width: 1025px) {
+            /* In flex-column main, split-layout must fill remaining space */
+            .split-layout { flex: 1 1 0; min-height: 0; }
+        }
         .split-content { flex: 0 0 auto; overflow: hidden; display: flex; flex-direction: column; min-width: 300px; }
         @media (min-width: 1025px) {
             .meeting-scroll-wrap { overflow-y: auto; }
@@ -83,6 +89,7 @@
             transition: background 0.15s;
         }
         .split-handle:hover { background: var(--pico-primary); }
+        body.resizing .split-pdf iframe { pointer-events: none; }
         .split-pdf { position: relative; flex: 1 1 auto; min-width: 300px; overflow: hidden; }
         .pdf-loading-overlay {
             position: absolute; inset: 0; z-index: 10;
@@ -231,6 +238,12 @@
                 <a href="/docs" target="_blank">API Docs</a>
                 <span style="color:var(--pico-muted-color)">·</span>
                 <a href="#" @click.prevent="goAdmin()">Admin</a>
+                <template x-if="municipality?.allrisBaseUrl">
+                    <span style="color:var(--pico-muted-color)">·</span>
+                </template>
+                <template x-if="municipality?.allrisBaseUrl">
+                    <a :href="'allris://mandant?url=' + municipality.allrisBaseUrl + '&bez=' + encodeURIComponent(body?.name || '') + '&mtyp=bi'">App Mandant</a>
+                </template>
             </div>
         </div>
     </div>
@@ -306,7 +319,17 @@
 
     <!-- Organisations -->
     <template x-if="view === 'orgs' && !loading && !query.trim()">
-        <section>
+        <section style="display:contents">
+        <div style="padding: 0.3rem 0 0.4rem;">
+            <label style="font-size: 0.82em; cursor: pointer; user-select: none; margin: 0; display: inline-flex; align-items: center; gap: 0.35em;">
+                <input type="checkbox" x-model="showEmptyOrgs" role="checkbox" style="margin: 0;">
+                Gremien ohne Sitzungen einblenden
+            </label>
+            <span x-show="!showEmptyOrgs && hiddenOrgCount > 0"
+                  style="font-size: 0.78em; color: var(--pico-muted-color); margin-left: 0.5em;"
+                  x-text="'(' + hiddenOrgCount + ' ausgeblendet)'"></span>
+        </div>
+        <div class="org-scroll-wrap">
             <!-- Desktop -->
             <table x-show="wideList" style="max-width:800px; width:100%; table-layout:fixed;">
                 <thead>
@@ -405,6 +428,7 @@
                     </div>
                 </template>
             </div>
+        </div><!-- org-scroll-wrap -->
         </section>
     </template>
 
@@ -928,6 +952,7 @@ function app() {
         loadingAll: false,
 
         showDetails: false,
+        showEmptyOrgs: false,
         wide: window.innerWidth > 1024,
         wideList: window.innerWidth > 640,
         agendaWidth: 700,
@@ -1045,6 +1070,7 @@ function app() {
             const startW = this.agendaWidth;
             document.body.style.cursor = 'col-resize';
             document.body.style.userSelect = 'none';
+            document.body.classList.add('resizing');
             const onMove = (ev) => {
                 const delta = ev.clientX - startX;
                 this.agendaWidth = Math.max(300, Math.min(window.innerWidth - 400, startW + delta));
@@ -1052,6 +1078,7 @@ function app() {
             const onUp = () => {
                 document.body.style.cursor = '';
                 document.body.style.userSelect = '';
+                document.body.classList.remove('resizing');
                 document.removeEventListener('mousemove', onMove);
                 document.removeEventListener('mouseup', onUp);
             };
@@ -1125,10 +1152,22 @@ function app() {
             const rows = [];
             for (const grp of this.orgTypes) {
                 if (grp.type === 'Mitgliedschaften') continue;
+                const visibleOrgs = (this.showEmptyOrgs || !this.allLoaded)
+                    ? grp.orgs
+                    : grp.orgs.filter(o => o.lastMeetingId || o.nextMeetingId || o.futureMeetingDates?.length);
+                if (visibleOrgs.length === 0) continue;
                 rows.push({ isHeader: true, type: grp.type });
-                for (const org of grp.orgs) rows.push({ isHeader: false, ...org });
+                for (const org of visibleOrgs) rows.push({ isHeader: false, ...org });
             }
             return rows;
+        },
+
+        get hiddenOrgCount() {
+            if (!this.allLoaded) return 0;
+            return this.orgs.filter(o =>
+                o.orgType !== 'Mitgliedschaften' &&
+                !o.lastMeetingId && !o.nextMeetingId && !o.futureMeetingDates?.length
+            ).length;
         },
 
         get filteredMeetings() {

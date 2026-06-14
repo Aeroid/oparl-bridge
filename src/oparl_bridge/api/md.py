@@ -3,12 +3,13 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy.orm import Session
 
 from oparl_bridge.config import settings
 from oparl_bridge.db.models import AgendaItem, Meeting, Membership, Organization, Paper, Person
 from oparl_bridge.db.session import get_db
+from oparl_bridge.scraper.base import shift_headings
 from oparl_bridge.wikidata import get_wikidata
 
 router = APIRouter(tags=["Markdown"])
@@ -248,11 +249,11 @@ async def md_meeting(meeting_id: int, request: Request, db: Session = Depends(ge
                 }
                 lines.append(f"Beschluss: {result_labels.get(ai.result, ai.result)}  ")
             if ai.resolution_text:
-                lines.append(f"\n{ai.resolution_text}\n")
+                lines.append(f"\n{shift_headings(ai.resolution_text, 3)}\n")
             if ai.vote_text:
-                lines.append(f"\n{ai.vote_text}\n")
+                lines.append(f"\n{shift_headings(ai.vote_text, 3)}\n")
             if ai.word_contribution:
-                lines.append(f"\n{ai.word_contribution}\n")
+                lines.append(f"\n{shift_headings(ai.word_contribution, 3)}\n")
 
             for f in ai.files:
                 if f.access_url.startswith("allris://to020/"):
@@ -353,3 +354,143 @@ async def md_persons(request: Request, db: Session = Depends(get_db)):
 
     lines.append(_footer())
     return _md_response("\n".join(lines), canonical=f"{base}/md/personen/", last_modified=latest)
+
+
+# ---------------------------------------------------------------------------
+# Crawler-meta: robots.txt, llms.txt, sitemap.xml
+# ---------------------------------------------------------------------------
+
+@router.get("/robots.txt", response_class=PlainTextResponse, tags=["Crawler-Metadaten"])
+async def robots_txt():
+    return PlainTextResponse(
+        "User-agent: *\nAllow: /md/\nAllow: /llms.txt\n",
+        media_type="text/plain; charset=utf-8",
+    )
+
+
+@router.get("/llms.txt", response_class=PlainTextResponse, tags=["Crawler-Metadaten"])
+async def llms_txt(request: Request, db: Session = Depends(get_db)):
+    base = str(request.base_url).rstrip("/")
+    wd = await get_wikidata(settings.wikidata_id) if settings.wikidata_id else None
+
+    orgs = db.query(Organization).order_by(Organization.name).all()
+    meetings = db.query(Meeting).order_by(Meeting.start.desc()).all()
+    papers = db.query(Paper).order_by(Paper.id.desc()).all()
+    persons = db.query(Person).order_by(Person.name).all()
+
+    org_meeting_count: dict[int, int] = {}
+    for mtg in meetings:
+        if mtg.organization_id:
+            org_meeting_count[mtg.organization_id] = org_meeting_count.get(mtg.organization_id, 0) + 1
+
+    org_by_id = {o.id: o for o in orgs}
+
+    lines = [
+        f"# {settings.body_name} — Ratsinformationssystem",
+        f"> Vollständiger Inhaltsindex. Alle Seiten als Markdown verfügbar unter {base}/md/.",
+        "",
+    ]
+
+    if wd:
+        if wd.bundesland or wd.landkreis:
+            parts = []
+            if wd.landkreis:
+                lurl = f"https://www.wikidata.org/wiki/{wd.landkreis_qid}" if wd.landkreis_qid else None
+                parts.append(f"[{wd.landkreis}]({lurl})" if lurl else wd.landkreis)
+            if wd.bundesland:
+                burl = f"https://www.wikidata.org/wiki/{wd.bundesland_qid}" if wd.bundesland_qid else None
+                parts.append(f"[{wd.bundesland}]({burl})" if burl else wd.bundesland)
+            lines.append(f"> Lage: {' · '.join(parts)}")
+        if wd.population:
+            lines.append(f"> Einwohner: {wd.population:,}".replace(",", "."))
+        if wd.mayor:
+            lines.append(f"> Bürgermeister/in: {wd.mayor}")
+        if wd.ags:
+            lines.append(f"> AGS: {wd.ags}")
+        lines += [
+            f"> Wikidata: {wd.wikidata_url}",
+            *([ f"> Wikipedia: {wd.wikipedia_de}" ] if wd.wikipedia_de else []),
+            "",
+        ]
+
+    lines += [
+        "## Überblick",
+        f"- {len(orgs)} Gremien",
+        f"- {len(meetings)} Sitzungen",
+        f"- {len(papers)} Vorlagen",
+        f"- {len(persons)} Personen",
+        "",
+        f"## Gremien ({len(orgs)})",
+    ]
+
+    for org in orgs:
+        count = org_meeting_count.get(org.id, 0)
+        if count == 0:
+            continue
+        label = org.name
+        if org.organization_type:
+            label += f" ({org.organization_type})"
+        lines.append(f"- [{label}]({base}/md/gremien/{org.id}) — {count} Sitzungen")
+
+    recent_meetings = meetings[:50]
+    lines += ["", f"## Aktuelle Sitzungen (50 von {len(meetings)}, [alle]({base}/md/sitzungen/))"]
+    for mtg in recent_meetings:
+        org_name = org_by_id[mtg.organization_id].name if mtg.organization_id and mtg.organization_id in org_by_id else ""
+        date_str = _fmt_date_short(mtg.start)
+        label = f"{date_str} — {org_name}" if org_name else date_str
+        lines.append(f"- [{label}]({base}/md/sitzungen/{mtg.id})")
+
+    lines += [
+        "",
+        f"## Vorlagen ({len(papers)})",
+        f"Alle {len(papers)} Vorlagen sind einzeln abrufbar unter `{base}/md/vorlagen/{{id}}`.",
+        "",
+        f"## Personen ({len(persons)})",
+        f"[Vollständige Personenliste mit Mitgliedschaften]({base}/md/personen/)",
+    ]
+
+    lines.append(_footer())
+    return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; charset=utf-8")
+
+
+@router.get("/sitemap.xml", tags=["Crawler-Metadaten"])
+async def sitemap_xml(request: Request, db: Session = Depends(get_db)):
+    base = str(request.base_url).rstrip("/")
+
+    orgs = db.query(Organization).all()
+    meetings = db.query(Meeting).order_by(Meeting.start.desc()).all()
+    papers = db.query(Paper).all()
+
+    def _url(loc: str, lastmod: str | None = None, changefreq: str | None = None) -> str:
+        parts = [f"  <url>\n    <loc>{loc}</loc>"]
+        if lastmod:
+            parts.append(f"    <lastmod>{lastmod}</lastmod>")
+        if changefreq:
+            parts.append(f"    <changefreq>{changefreq}</changefreq>")
+        parts.append("  </url>")
+        return "\n".join(parts)
+
+    def _isodate(dt: datetime | None) -> str | None:
+        return dt.strftime("%Y-%m-%d") if dt else None
+
+    entries = [
+        _url(f"{base}/md/", changefreq="weekly"),
+        _url(f"{base}/md/sitzungen/", changefreq="weekly"),
+        _url(f"{base}/md/personen/", changefreq="monthly"),
+        _url(f"{base}/llms.txt", changefreq="weekly"),
+    ]
+    for org in orgs:
+        entries.append(_url(f"{base}/md/gremien/{org.id}", _isodate(org.scraped_at), "monthly"))
+    for mtg in meetings:
+        lm = _isodate(mtg.detail_scraped_at or mtg.scraped_at)
+        entries.append(_url(f"{base}/md/sitzungen/{mtg.id}", lm))
+    for p in papers:
+        entries.append(_url(f"{base}/md/vorlagen/{p.id}", _isodate(p.scraped_at)))
+
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + "\n".join(entries)
+        + "\n</urlset>\n"
+    )
+    return Response(content=xml, media_type="application/xml")

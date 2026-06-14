@@ -11,3 +11,4 @@ build/
 venv/
 oparl_cookies.json
 wikidata_cache.json
+oparl-bridge-*.tar.gz
